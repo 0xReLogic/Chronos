@@ -1,0 +1,14 @@
+{
+  "columns": [
+    {
+      "name": "id",
+      "data_type": "Int",
+      "primary_key": false
+    },
+    {
+      "name": "name",
+      "data_type": "String",
+      "primary_key": false
+    }
+  ]
+}

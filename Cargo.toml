@@ -1,0 +1,36 @@
+[package]
+name = "chronos"
+version = "0.1.0"
+edition = "2021"
+description = "A SQL database built from scratch in Rust"
+authors = ["Your Name"]
+
+[dependencies]
+# SQL Parser
+pest = "2.7"
+pest_derive = "2.7"
+
+# Command line interface
+rustyline = "12.0"
+clap = { version = "4.4", features = ["derive"] }
+
+# Storage
+csv = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.141"
+
+# Utilities
+thiserror = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+bincode = { version = "2.0.1", features = ["serde"] }
+tokio = { version = "1.47.0", features = ["full"] }
+rand = "0.9.2"
+
+# Phase 2 dependencies
+tonic = "0.10"
+prost = "0.12"
+
+[build-dependencies]
+tonic-build = { version = "0.10", features = ["prost"] }

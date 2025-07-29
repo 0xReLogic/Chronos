@@ -1,0 +1,10 @@
+warning: unused variable: `node`
+   --> src\main.rs:133:17
+    |
+133 |             let node = Arc::clone(&raft.node);
+    |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_node`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `chronos` (bin "chronos") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s

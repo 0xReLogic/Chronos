@@ -1,0 +1,65 @@
+// SQL Grammar for Chronos Database
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "--" ~ (!"\n" ~ ANY)* ~ "\n"? }
+
+// Keywords
+CREATE = { ^"CREATE" }
+TABLE = { ^"TABLE" }
+INSERT = { ^"INSERT" }
+INTO = { ^"INTO" }
+VALUES = { ^"VALUES" }
+SELECT = { ^"SELECT" }
+FROM = { ^"FROM" }
+WHERE = { ^"WHERE" }
+AND = { ^"AND" }
+OR = { ^"OR" }
+NOT = { ^"NOT" }
+NULL = { ^"NULL" }
+INT = { ^"INT" }
+TEXT = { ^"TEXT" }
+FLOAT = { ^"FLOAT" }
+BOOLEAN = { ^"BOOLEAN" }
+PRIMARY = { ^"PRIMARY" }
+KEY = { ^"KEY" }
+STRING = { ^"STRING" }
+
+// Identifiers
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+quoted_identifier = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+table_name = { identifier | quoted_identifier }
+column_name = { identifier | quoted_identifier }
+
+// Data types
+data_type = { INT | TEXT | FLOAT | BOOLEAN | STRING }
+
+// Literals
+string_literal = @{ "'" ~ (!"'" ~ ANY)* ~ "'" }
+integer_literal = @{ ASCII_DIGIT+ }
+float_literal = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* | "." ~ ASCII_DIGIT+ }
+boolean_literal = @{ ^"TRUE" | ^"FALSE" }
+null_literal = @{ NULL }
+literal = { string_literal | float_literal | integer_literal | boolean_literal | null_literal }
+
+// Operators
+comparison_operator = { "=" | "!=" | "<" | ">" | "<=" | ">=" }
+
+// Expressions
+column_definition = { column_name ~ data_type ~ (PRIMARY ~ KEY)? }
+column_list = { "(" ~ column_definition ~ ("," ~ column_definition)* ~ ")" }
+value = { literal | "?" }
+value_list = { "(" ~ value ~ ("," ~ value)* ~ ")" }
+column_selector = { "*" | column_name ~ ("," ~ column_name)* }
+condition = { column_name ~ comparison_operator ~ value }
+where_clause = { WHERE ~ condition ~ ((AND | OR) ~ condition)* }
+
+// Statements
+create_table_stmt = { CREATE ~ TABLE ~ table_name ~ column_list ~ ";" }
+insert_stmt = { INSERT ~ INTO ~ table_name ~ ("(" ~ column_name ~ ("," ~ column_name)* ~ ")")? ~ VALUES ~ value_list ~ ";" }
+select_stmt = { SELECT ~ column_selector ~ FROM ~ table_name ~ where_clause? ~ ";" }
+
+// SQL statement
+sql_stmt = { create_table_stmt | insert_stmt | select_stmt }
+
+// Entry point
+sql = { SOI ~ sql_stmt ~ EOI }

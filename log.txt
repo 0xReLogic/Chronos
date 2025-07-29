@@ -1,0 +1,11 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running `target\debug\chronos.exe node --id node1 --address 127.0.0.1:8001 --data-dir data/node1 --clean`
+[2025-07-29T20:47:56Z INFO  chronos] Starting Chronos node node1 at 127.0.0.1:8001
+[2025-07-29T20:47:56Z INFO  chronos] --clean flag detected, removing data directory: data/node1/node1
+[2025-07-29T20:47:56Z INFO  chronos] gRPC server listening on 127.0.0.1:8001
+[2025-07-29T20:47:56Z INFO  chronos::raft] Election timeout elapsed, starting election
+[2025-07-29T20:47:56Z INFO  chronos::raft::node] Election won (single node), becoming leader for term 1
+[2025-07-29T20:47:56Z INFO  chronos::raft::node] Node node1 becoming leader for term 1
+[2025-07-29T20:48:19Z INFO  chronos::network::server] Received SQL: CREATE TABLE users (id INT, name STRING);
+[2025-07-29T20:48:25Z INFO  chronos::network::server] Received SQL: INSERT INTO users (id, name) VALUES (1, 'Alice');
+[2025-07-29T20:48:33Z INFO  chronos::network::server] Received SQL: SELECT id, name FROM users;

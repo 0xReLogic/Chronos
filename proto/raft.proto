@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package raft;
+
+// The Raft service definition
+service RaftService {
+  // Request Vote RPC
+  rpc RequestVote (RequestVoteRequest) returns (RequestVoteResponse);
+  
+  // Append Entries RPC
+  rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+}
+
+// Request Vote RPC
+message RequestVoteRequest {
+  uint64 term = 1;
+  string candidate_id = 2;
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+}
+
+message RequestVoteResponse {
+  uint64 term = 1;
+  bool vote_granted = 2;
+}
+
+// Append Entries RPC
+message AppendEntriesRequest {
+  uint64 term = 1;
+  string leader_id = 2;
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  repeated LogEntry entries = 5;
+  uint64 leader_commit = 6;
+}
+
+message AppendEntriesResponse {
+  uint64 term = 1;
+  bool success = 2;
+  uint64 match_index = 3;
+}
+
+// Log Entry
+message LogEntry {
+  uint64 term = 1;
+  bytes command = 2;
+}
+
+// SQL Service for client interactions
+service SqlService {
+  // Execute SQL command
+  rpc ExecuteSql (SqlRequest) returns (SqlResponse);
+}
+
+message SqlRequest {
+  string sql = 1;
+}
+
+message SqlResponse {
+  bool success = 1;
+  string error = 2;
+  repeated string columns = 3;
+  repeated Row rows = 4;
+}
+
+message Row {
+  repeated Value values = 1;
+}
+
+message Value {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double float_value = 3;
+    bool bool_value = 4;
+    bool null_value = 5;
+  }
+}

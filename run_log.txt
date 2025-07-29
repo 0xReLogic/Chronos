@@ -1,0 +1,106 @@
+   Compiling chronos v0.1.0 (D:\Project Utama\Rust\Chronos)
+warning: unused import: `Condition`
+ --> src\executor\mod.rs:4:44
+  |
+4 | use crate::parser::{Ast, Statement, Value, Condition};
+  |                                            ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Path`
+ --> src\storage\csv_storage.rs:4:17
+  |
+4 | use std::path::{Path, PathBuf};
+  |                 ^^^^
+
+warning: unused import: `warn`
+ --> src\raft\node.rs:6:19
+  |
+6 | use ::log::{info, warn, error, debug};
+  |                   ^^^^
+
+warning: unused import: `OpenOptions`
+ --> src\raft\log.rs:1:21
+  |
+1 | use std::fs::{File, OpenOptions};
+  |                     ^^^^^^^^^^^
+
+warning: unused imports: `SeekFrom`, `Seek`, and `self`
+ --> src\raft\log.rs:2:15
+  |
+2 | use std::io::{self, Read, Write, Seek, SeekFrom};
+  |               ^^^^               ^^^^  ^^^^^^^^
+
+warning: unused import: `Path`
+ --> src\raft\log.rs:3:17
+  |
+3 | use std::path::{Path, PathBuf};
+  |                 ^^^^
+
+warning: unused import: `Instant`
+  --> src\raft\mod.rs:14:27
+   |
+14 | use std::time::{Duration, Instant};
+   |                           ^^^^^^^
+
+warning: unused import: `warn`
+  --> src\raft\mod.rs:18:19
+   |
+18 | use ::log::{info, warn, error, debug};
+   |                   ^^^^
+
+error[E0596]: cannot borrow `*self` as mutable, as it is behind a `&` reference
+  --> src\executor\mod.rs:90:17
+   |
+90 |                 self.execute_statement(stmt)?;
+   |                 ^^^^ `self` is a `&` reference, so the data it refers to cannot be borrowed as mutable
+   |
+help: consider changing this to be a mutable reference
+   |
+82 |     pub fn apply_command(&mut self, command: &[u8]) -> Result<(), ExecutorError> {
+   |                           +++
+
+error[E0596]: cannot borrow `self.inner` as mutable, as it is behind a `&` reference
+  --> src\storage\mod.rs:28:9
+   |
+28 |         self.inner.create_table(table_name, columns)
+   |         ^^^^^^^^^^ `self` is a `&` reference, so the data it refers to cannot be borrowed as mutable
+   |
+help: consider changing this to be a mutable reference
+   |
+27 |     pub fn create_table(&mut self, table_name: &str, columns: &[ColumnDefinition]) -> Result<(), StorageError> {
+   |                          +++
+
+warning: unused variable: `leader_address`
+  --> src\repl\mod.rs:24:50
+   |
+24 |     pub fn with_distributed_mode(data_dir: &str, leader_address: &str) -> Self {
+   |                                                  ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_leader_address`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `log_index`
+   --> src\raft\node.rs:158:13
+    |
+158 |         let log_index = self.log.append(entry)?;
+    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_log_index`
+
+warning: variable does not need to be mutable
+   --> src\raft\node.rs:339:21
+    |
+339 |                 let mut new_entries = entries.clone();
+    |                     ----^^^^^^^^^^^
+    |                     |
+    |                     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `entry`
+   --> src\raft\log.rs:137:30
+    |
+137 |     fn append_to_disk(&self, entry: &LogEntry) -> Result<(), RaftError> {
+    |                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_entry`
+
+For more information about this error, try `rustc --explain E0596`.
+warning: `chronos` (lib) generated 12 warnings
+error: could not compile `chronos` (lib) due to 2 previous errors; 12 warnings emitted
