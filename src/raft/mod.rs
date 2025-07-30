@@ -80,7 +80,7 @@ impl Raft {
                 let mut node = node_clone.lock().unwrap();
                 match node.handle_message(message) {
                     Ok(_) => {},
-                    Err(e) => error!("Error handling message: {}", e),
+                    Err(e) => error!("Error handling message: {e}"),
                 }
             }
         });
@@ -107,7 +107,7 @@ impl Raft {
                     // Send heartbeats
                     match node.send_heartbeats() {
                         Ok(_) => debug!("Sent heartbeats"),
-                        Err(e) => error!("Error sending heartbeats: {}", e),
+                        Err(e) => error!("Error sending heartbeats: {e}"),
                     }
                 } else {
                     // Check if election timeout has elapsed
@@ -115,7 +115,7 @@ impl Raft {
                         info!("Election timeout elapsed, starting election");
                         match node.start_election() {
                             Ok(_) => debug!("Started election"),
-                            Err(e) => error!("Error starting election: {}", e),
+                            Err(e) => error!("Error starting election: {e}"),
                         }
                     }
                 }

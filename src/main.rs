@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Client { leader, data_dir } => {
             match leader {
                 Some(leader_address) => {
-                    info!("Starting Chronos client connecting to leader at {}", leader_address);
+                    info!("Starting Chronos client connecting to leader at {leader_address}");
                     let mut repl = Repl::with_distributed_mode(&leader_address);
                     repl.run().await;
                 }
@@ -105,9 +105,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Command::Node { id, data_dir, address, peers, clean } => {
-            info!("Starting Chronos node {} at {}", id, address);
+            info!("Starting Chronos node {id} at {address}");
 
-            let node_data_dir = format!("{}/{}", data_dir, id);
+            let node_data_dir = format!("{data_dir}/{id}");
 
             if clean {
                 info!("--clean flag detected, removing data directory: {}", &node_data_dir);
@@ -136,14 +136,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         
                         if peer_id != id {
                             config.add_peer(peer_id, peer_addr);
-                            info!("Added peer: {} at {}", peer_id, peer_addr);
+                            info!("Added peer: {peer_id} at {peer_addr}");
                         }
                     }
                 }
             }
             
             // Create data directory for this node
-            let node_data_dir = format!("{}/{}", data_dir, id);
+            let node_data_dir = format!("{data_dir}/{id}");
             std::fs::create_dir_all(&node_data_dir)?;
             
             // Create executor
@@ -160,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let raft_server = chronos::network::RaftServer::new(Arc::clone(&raft.node));
             let sql_server = chronos::network::SqlServer::new(Arc::clone(&raft.node), Arc::clone(&executor));
 
-            info!("gRPC server listening on {}", addr);
+            info!("gRPC server listening on {addr}");
             tonic::transport::Server::builder()
                 .add_service(chronos::network::proto::raft_service_server::RaftServiceServer::new(raft_server))
                 .add_service(chronos::network::proto::sql_service_server::SqlServiceServer::new(sql_server))

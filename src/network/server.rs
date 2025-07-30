@@ -54,8 +54,8 @@ impl RaftService for RaftServer {
                 }
             },
             Err(e) => {
-                error!("Error handling RequestVote: {}", e);
-                return Err(Status::internal(format!("Internal error: {}", e)));
+                error!("Error handling RequestVote: {e}");
+                return Err(Status::internal(format!("Internal error: {e}")));
             }
         }
         
@@ -106,8 +106,8 @@ impl RaftService for RaftServer {
                 }
             },
             Err(e) => {
-                error!("Error handling AppendEntries: {}", e);
-                return Err(Status::internal(format!("Internal error: {}", e)));
+                error!("Error handling AppendEntries: {e}");
+                return Err(Status::internal(format!("Internal error: {e}")));
             }
         }
         
@@ -139,10 +139,10 @@ impl SqlService for SqlServer {
         let ast = match Parser::parse(&req.sql) {
             Ok(ast) => ast,
             Err(e) => {
-                error!("SQL parse error: {}", e);
+                error!("SQL parse error: {e}");
                 return Ok(Response::new(SqlResponse {
                     success: false,
-                    error: format!("Parse error: {}", e),
+                    error: format!("Parse error: {e}"),
                     columns: vec![],
                     rows: vec![],
                 }));
@@ -166,12 +166,12 @@ impl SqlService for SqlServer {
         
         // Submit the command to Raft
         let command = bincode::serde::encode_to_vec(&ast, bincode::config::standard())
-            .map_err(|e| Status::internal(format!("Serialization error: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Serialization error: {e}")))?;
         
         {
             let mut node = self.node.lock().unwrap();
             node.submit_command(command)
-                .map_err(|e| Status::internal(format!("Raft error: {}", e)))?;
+                .map_err(|e| Status::internal(format!("Raft error: {e}")))?;
         }
         
         // For now, we'll just execute the command directly
@@ -179,7 +179,7 @@ impl SqlService for SqlServer {
         let result = {
             let mut executor = self.executor.lock().unwrap();
             executor.execute(ast)
-                .map_err(|e| Status::internal(format!("Execution error: {}", e)))?
+                .map_err(|e| Status::internal(format!("Execution error: {e}")))?
         };
         
         // Convert the result to the response format

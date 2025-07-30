@@ -35,7 +35,7 @@ impl Log {
             match log.load_from_disk() {
                 Ok(_) => {},
                 Err(e) => {
-                    eprintln!("Error loading log from disk: {}", e);
+                    eprintln!("Error loading log from disk: {e}");
                     // In a production system, we might want to handle this more gracefully
                 }
             }
@@ -79,7 +79,7 @@ impl Log {
     }
     
     pub fn get_entries(&self, start: u64, end: Option<u64>) -> Result<Vec<LogEntry>, RaftError> {
-        let end = end.unwrap_or_else(|| self.entries.len() as u64);
+        let end = end.unwrap_or(self.entries.len() as u64);
         
         if start >= end || start >= self.entries.len() as u64 {
             return Ok(Vec::new());

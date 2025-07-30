@@ -2,10 +2,6 @@
 # Ignore compiled artifacts and dependencies
 /target/
 
-# The Cargo.lock file is intended to be checked into source control for applications
-# to ensure reproducible builds. For libraries, it is often ignored.
-# Since Chronos is an application, we will NOT ignore Cargo.lock.
-
 # Runtime Data & Logs
 # Ignore the data directory created by nodes
 /data/
@@ -13,6 +9,8 @@
 # Ignore log files
 log.txt
 *.log
+build_log.txt
+clippy_log.txt
 
 # Environment files
 # In case you add environment-specific variables

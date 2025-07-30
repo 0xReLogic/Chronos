@@ -114,7 +114,7 @@ impl RaftNode {
         self.broadcast_message(request)?;
 
         // Check if we have already won the election (e.g. single node cluster)
-        let majority_count = (self.peers.len() + 1) / 2 + 1;
+        let majority_count = self.peers.len().div_ceil(2) + 1;
         if self.votes_received.len() >= majority_count {
             info!("Election won (single node), becoming leader for term {}", self.state.current_term);
             self.become_leader()?;
@@ -271,19 +271,18 @@ impl RaftNode {
         }
         
         // Only process if we're still a candidate and in the same term
-        if self.state.role == NodeRole::Candidate && term == self.state.current_term {
-            if vote_granted {
+        if self.state.role == NodeRole::Candidate && term == self.state.current_term
+            && vote_granted {
                 // Count the vote
                 self.votes_received.insert(String::from("peer"), true); // This is a placeholder, in a real implementation we'd use the peer's ID
                 
                 // Check if we have majority
-                let votes_needed = (self.peers.len() + 1) / 2 + 1; // +1 for self
+                let votes_needed = self.peers.len().div_ceil(2) + 1; // +1 for self
                 if self.votes_received.values().filter(|&&v| v).count() >= votes_needed {
                     // We won the election!
                     self.become_leader()?;
                 }
             }
-        }
         
         Ok(())
     }
@@ -337,7 +336,7 @@ impl RaftNode {
             false
         } else {
             // Check if terms match
-            self.log.term_at(prev_log_index).map_or(false, |t| t == prev_log_term)
+            self.log.term_at(prev_log_index) == Some(prev_log_term)
         };
         
         if log_ok {
@@ -522,11 +521,11 @@ impl RaftNode {
     }
     
     fn send_message_to_peer(&self, peer_id: &str, message: RaftMessage) -> Result<(), RaftError> {
-        debug!("Sending message to peer {}: {:?}", peer_id, message);
+        debug!("Sending message to peer {peer_id}: {message:?}");
         
         // Get the peer address
         let peer_addr = self.peers.get(peer_id)
-            .ok_or_else(|| RaftError::NetworkError(format!("Unknown peer: {}", peer_id)))?;
+            .ok_or_else(|| RaftError::NetworkError(format!("Unknown peer: {peer_id}")))?;
         
         // In a real implementation, we would use the network client to send the message
         // For now, we'll just create a task to send it
@@ -542,16 +541,16 @@ impl RaftNode {
             match message_clone {
                 RaftMessage::RequestVote { term, candidate_id, last_log_index, last_log_term } => {
                     if let Err(e) = client.request_vote(term, &candidate_id, last_log_index, last_log_term).await {
-                        error!("Failed to send RequestVote to {}: {}", peer_id_clone, e);
+                        error!("Failed to send RequestVote to {peer_id_clone}: {e}");
                     }
                 },
                 RaftMessage::AppendEntries { term, leader_id, prev_log_index, prev_log_term, entries, leader_commit } => {
                     if let Err(e) = client.append_entries(term, &leader_id, prev_log_index, prev_log_term, entries, leader_commit).await {
-                        error!("Failed to send AppendEntries to {}: {}", peer_id_clone, e);
+                        error!("Failed to send AppendEntries to {peer_id_clone}: {e}");
                     }
                 },
                 _ => {
-                    error!("Cannot send response message to peer: {:?}", message_clone);
+                    error!("Cannot send response message to peer: {message_clone:?}");
                 }
             }
         });

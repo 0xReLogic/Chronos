@@ -67,11 +67,11 @@ impl Executor {
                     
                     // Serialize the command
                     let command = bincode::encode_to_vec(&ast, bincode::config::standard())
-                        .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {}", e)))?;
+                        .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {e}")))?;
                     
                     // Submit to Raft
                     node.submit_command(command)
-                        .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {}", e)))?;
+                        .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {e}")))?;
                     
                     // For now, we'll just execute the command directly
                     // In a real implementation, we would wait for the command to be committed
@@ -95,7 +95,7 @@ impl Executor {
     pub fn apply_command(&mut self, command: &[u8]) -> Result<(), ExecutorError> {
         // Deserialize the command
         let (ast, _): (Ast, usize) = bincode::decode_from_slice(command, bincode::config::standard())
-            .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {}", e)))?;
+            .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {e}")))?;
         
         // Execute the command
         match ast {
@@ -178,7 +178,7 @@ impl Executor {
                 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Table {} created", table_name))]],
+                    rows: vec![vec![Value::String(format!("Table {table_name} created"))]],
                 })
             },
             Statement::Insert { table_name, columns, values } => {
@@ -187,7 +187,7 @@ impl Executor {
                 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Inserted into {}", table_name))]],
+                    rows: vec![vec![Value::String(format!("Inserted into {table_name}"))]],
                 })
             },
             Statement::Select { table_name, columns, conditions } => {
@@ -202,7 +202,7 @@ impl Executor {
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Updated rows in {}", table_name))]],
+                    rows: vec![vec![Value::String(format!("Updated rows in {table_name}"))]],
                 })
             },
             Statement::Delete { table_name, conditions } => {
@@ -211,7 +211,7 @@ impl Executor {
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Deleted rows from {}", table_name))]],
+                    rows: vec![vec![Value::String(format!("Deleted rows from {table_name}"))]],
                 })
             },
             Statement::CreateIndex { index_name, table_name, column_name } => {
@@ -220,7 +220,7 @@ impl Executor {
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Index {} created on table {}", index_name, table_name))]],
+                    rows: vec![vec![Value::String(format!("Index {index_name} created on table {table_name}"))]],
                 })
             },
 

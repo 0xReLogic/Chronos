@@ -29,10 +29,10 @@ pub enum Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::String(s) => write!(f, "{}", s),
-            Value::Integer(i) => write!(f, "{}", i),
-            Value::Float(fl) => write!(f, "{}", fl),
-            Value::Boolean(b) => write!(f, "{}", b),
+            Value::String(s) => write!(f, "{s}"),
+            Value::Integer(i) => write!(f, "{i}"),
+            Value::Float(fl) => write!(f, "{fl}"),
+            Value::Boolean(b) => write!(f, "{b}"),
             Value::Null => write!(f, "NULL"),
         }
     }
@@ -263,11 +263,8 @@ fn parse_insert(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
 
 fn parse_value(pairs: Pairs<Rule>) -> Result<Value, ParserError> {
     for pair in pairs {
-        match pair.as_rule() {
-            Rule::literal => {
-                return parse_literal(pair.into_inner());
-            }
-            _ => {}
+        if pair.as_rule() == Rule::literal {
+            return parse_literal(pair.into_inner());
         }
     }
     
@@ -369,12 +366,9 @@ fn parse_where_clause(pairs: Pairs<Rule>) -> Result<Vec<Condition>, ParserError>
     let mut conditions = Vec::new();
     
     for pair in pairs {
-        match pair.as_rule() {
-            Rule::condition => {
-                let condition = parse_condition(pair.into_inner())?;
-                conditions.push(condition);
-            }
-            _ => {}
+        if pair.as_rule() == Rule::condition {
+            let condition = parse_condition(pair.into_inner())?;
+            conditions.push(condition);
         }
     }
     

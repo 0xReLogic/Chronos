@@ -21,9 +21,9 @@ impl From<tonic::Status> for NetworkError {
 impl std::fmt::Display for NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NetworkError::ConnectionError(e) => write!(f, "Connection error: {}", e),
-            NetworkError::RpcError(e) => write!(f, "RPC error: {}", e),
-            NetworkError::TransportError(e) => write!(f, "Transport error: {}", e),
+            NetworkError::ConnectionError(e) => write!(f, "Connection error: {e}"),
+            NetworkError::RpcError(e) => write!(f, "RPC error: {e}"),
+            NetworkError::TransportError(e) => write!(f, "Transport error: {e}"),
         }
     }
 }

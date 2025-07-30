@@ -39,11 +39,11 @@ impl CsvStorage {
         };
 
         if let Err(e) = storage.load_schemas() {
-            eprintln!("Warning: Could not load schemas: {}", e);
+            eprintln!("Warning: Could not load schemas: {e}");
         }
 
         if let Err(e) = storage.load_indices() {
-            eprintln!("Warning: Could not load indices: {}", e);
+            eprintln!("Warning: Could not load indices: {e}");
         }
 
         storage
@@ -60,7 +60,7 @@ impl CsvStorage {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 let table_name = path.file_stem().unwrap().to_string_lossy().to_string();
                 let mut file = File::open(&path)?;
                 let mut contents = String::new();
@@ -82,7 +82,7 @@ impl CsvStorage {
             std::fs::create_dir_all(&schema_dir)?;
         }
 
-        let schema_path = schema_dir.join(format!("{}.json", table_name));
+        let schema_path = schema_dir.join(format!("{table_name}.json"));
         let schema_json = serde_json::to_string_pretty(schema)
             .map_err(|e| StorageError::SchemaError(e.to_string()))?;
 
@@ -93,12 +93,12 @@ impl CsvStorage {
     }
 
     fn table_path(&self, table_name: &str) -> PathBuf {
-        self.data_dir.join(format!("{}.csv", table_name))
+        self.data_dir.join(format!("{table_name}.csv"))
     }
 
     fn index_path(&self, index_name: &str) -> PathBuf {
         let index_dir = self.data_dir.join("indices");
-        index_dir.join(format!("{}.idx", index_name))
+        index_dir.join(format!("{index_name}.idx"))
     }
 
     fn get_schema_and_path(&self, table_name: &str) -> Result<(&TableSchema, PathBuf), StorageError> {
@@ -107,7 +107,7 @@ impl CsvStorage {
             return Err(StorageError::TableNotFound(table_name.to_string()));
         }
         let schema = self.schemas.get(table_name)
-            .ok_or_else(|| StorageError::SchemaError(format!("Schema not found for table {}", table_name)))?;
+            .ok_or_else(|| StorageError::SchemaError(format!("Schema not found for table {table_name}")))?;
         Ok((schema, table_path))
     }
 
@@ -116,16 +116,16 @@ impl CsvStorage {
             return Ok(Value::Null);
         }
         match data_type {
-            DataType::Int => s.parse::<i64>().map(Value::Integer).map_err(|_| StorageError::ValueError(format!("Invalid integer: {}", s))),
-            DataType::Float => s.parse::<f64>().map(Value::Float).map_err(|_| StorageError::ValueError(format!("Invalid float: {}", s))),
-            DataType::Boolean => s.parse::<bool>().map(Value::Boolean).map_err(|_| StorageError::ValueError(format!("Invalid boolean: {}", s))),
+            DataType::Int => s.parse::<i64>().map(Value::Integer).map_err(|_| StorageError::ValueError(format!("Invalid integer: {s}"))),
+            DataType::Float => s.parse::<f64>().map(Value::Float).map_err(|_| StorageError::ValueError(format!("Invalid float: {s}"))),
+            DataType::Boolean => s.parse::<bool>().map(Value::Boolean).map_err(|_| StorageError::ValueError(format!("Invalid boolean: {s}"))),
             DataType::Text | DataType::String => Ok(Value::String(s.to_string())),
         }
     }
 
     pub fn create_table(&mut self, table_name: &str, columns: &[ColumnDefinition]) -> Result<(), StorageError> {
         if self.schemas.contains_key(table_name) {
-            return Err(StorageError::SchemaError(format!("Table {} already exists", table_name)));
+            return Err(StorageError::SchemaError(format!("Table {table_name} already exists")));
         }
 
         let table_path = self.table_path(table_name);
@@ -152,7 +152,7 @@ impl CsvStorage {
 
         let file = OpenOptions::new().append(true).open(&table_path)?;
         let mut wtr = csv::WriterBuilder::new().has_headers(false).from_writer(file);
-        let values_str: Vec<String> = values.iter().map(|v| format!("{}", v)).collect();
+        let values_str: Vec<String> = values.iter().map(|v| format!("{v}")).collect();
         wtr.write_record(&values_str)?;
         wtr.flush()?;
 
@@ -180,7 +180,7 @@ impl CsvStorage {
 
                 // Persist the updated index back to disk
                 let encoded = bincode::encode_to_vec(&*metadata, bincode::config::standard())
-                    .map_err(|e| StorageError::IndexError(format!("Failed to serialize updated index: {}", e)))?;
+                    .map_err(|e| StorageError::IndexError(format!("Failed to serialize updated index: {e}")))?;
                 let mut file = File::create(&index_path)?;
                 file.write_all(&encoded)?;
             }
@@ -217,7 +217,7 @@ impl CsvStorage {
                 let mut row_values = Vec::new();
                 for col_name in &final_selected_columns {
                     let col_idx = *column_indices.get(col_name).ok_or_else(|| StorageError::ColumnNotFound(col_name.clone()))?;
-                    let cell_value = record.get(col_idx).ok_or_else(|| StorageError::ValueError(format!("Invalid column index: {}", col_idx)))?;
+                    let cell_value = record.get(col_idx).ok_or_else(|| StorageError::ValueError(format!("Invalid column index: {col_idx}")))?;
                     let column_def = schema.columns.iter().find(|c| &c.name == col_name).ok_or_else(|| StorageError::ColumnNotFound(col_name.clone()))?;
                     let value = self.convert_str_to_value(cell_value, &column_def.data_type)?;
                     row_values.push(value);
@@ -233,7 +233,7 @@ impl CsvStorage {
         for condition in conditions {
             let column_index = *column_indices.get(condition.column_name.as_str())
                 .ok_or_else(|| StorageError::ColumnNotFound(condition.column_name.clone()))?;
-            let cell_value_str = record.get(column_index).ok_or_else(|| StorageError::ValueError(format!("Record missing value for index {}", column_index)))?;
+            let cell_value_str = record.get(column_index).ok_or_else(|| StorageError::ValueError(format!("Record missing value for index {column_index}")))?;
             let record_value = self.convert_str_to_value(cell_value_str, &schema.columns[column_index].data_type)?;
 
             let matches = match condition.operator {
@@ -265,7 +265,7 @@ impl CsvStorage {
             let mut record_values: Vec<String> = record.iter().map(String::from).collect();
 
             let should_update = match &conditions {
-                Some(conds) if !conds.is_empty() => self.check_conditions(&record, &schema, &column_indices, conds)?,
+                Some(conds) if !conds.is_empty() => self.check_conditions(&record, schema, &column_indices, conds)?,
                 _ => true, // If no conditions, update all rows
             };
 
@@ -300,7 +300,7 @@ impl CsvStorage {
 
         for record in all_records {
             let should_delete = match &conditions {
-                Some(conds) if !conds.is_empty() => self.check_conditions(&record, &schema, &column_indices, conds)?,
+                Some(conds) if !conds.is_empty() => self.check_conditions(&record, schema, &column_indices, conds)?,
                 _ => true, // If no conditions, delete all rows
             };
 
@@ -332,7 +332,7 @@ impl CsvStorage {
                 let index_name = path.file_stem().unwrap().to_str().unwrap().to_string();
                 let file_content = std::fs::read(&path)?;
                 let (metadata, _): (IndexMetadata, usize) = bincode::decode_from_slice(&file_content, bincode::config::standard())
-                    .map_err(|e| StorageError::IndexError(format!("Failed to deserialize index '{}': {}", index_name, e)))?;
+                    .map_err(|e| StorageError::IndexError(format!("Failed to deserialize index '{index_name}': {e}")))?;
                 self.indices.insert(index_name, metadata);
             }
         }
@@ -376,7 +376,7 @@ impl CsvStorage {
         }
 
         let encoded = bincode::encode_to_vec(&metadata, bincode::config::standard())
-            .map_err(|e| StorageError::IndexError(format!("Failed to serialize index: {}", e)))?;
+            .map_err(|e| StorageError::IndexError(format!("Failed to serialize index: {e}")))?;
         
         let mut file = File::create(&index_path)?;
         file.write_all(&encoded)?;
@@ -483,7 +483,7 @@ mod tests {
 
         storage.update(&table_name, &assignments, &conditions).unwrap();
 
-        let results = storage.select(&table_name, &vec!["*".to_string()], &None).unwrap();
+        let results = storage.select(&table_name, &["*".to_string()], &None).unwrap();
         assert_eq!(results.rows.len(), 3);
 
         let bob_row = results.rows.iter().find(|row| row[1] == Value::String("Bob".to_string())).unwrap();
@@ -502,7 +502,7 @@ mod tests {
 
         storage.delete(&table_name, &conditions).unwrap();
 
-        let results = storage.select(&table_name, &vec!["*".to_string()], &None).unwrap();
+        let results = storage.select(&table_name, &["*".to_string()], &None).unwrap();
         assert_eq!(results.rows.len(), 2);
 
         let charlie_row = results.rows.iter().find(|row| row[1] == Value::String("Charlie".to_string()));

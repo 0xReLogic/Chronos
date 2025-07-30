@@ -68,7 +68,7 @@ impl Repl {
                                     // Print column headers
                                     let header_width = 20;
                                     for col in &response.columns {
-                                        print!("{:width$}", col, width = header_width);
+                                        print!("{col:header_width$}");
                                     }
                                     println!();
                                     
@@ -89,13 +89,13 @@ impl Repl {
                                                 Some(crate::network::proto::value::Value::NullValue(_)) => "NULL".to_string(),
                                                 None => "NULL".to_string(),
                                             };
-                                            print!("{:width$}", display, width = header_width);
+                                            print!("{display:header_width$}");
                                         }
                                         println!();
                                     }
                                 },
                                 Err(e) => {
-                                    eprintln!("Network error: {}", e);
+                                    eprintln!("Network error: {e}");
                                 },
                             }
                         } else {
@@ -111,7 +111,7 @@ impl Repl {
                                         // Print column headers
                                         let header_width = 20;
                                         for col in &result.columns {
-                                            print!("{:width$}", col, width = header_width);
+                                            print!("{col:header_width$}");
                                         }
                                         println!();
                                         
@@ -131,18 +131,18 @@ impl Repl {
                                                     Value::Boolean(b) => b.to_string(),
                                                     Value::Null => "NULL".to_string(),
                                                 };
-                                                print!("{:width$}", display, width = header_width);
+                                                print!("{display:header_width$}");
                                             }
                                             println!();
                                         }
                                     },
                                     Err(e) => {
-                                        eprintln!("Error: {}", e);
+                                        eprintln!("Error: {e}");
                                     },
                                 }
                             },
                             Err(e) => {
-                                eprintln!("Parse error: {}", e);
+                                eprintln!("Parse error: {e}");
                             },
                         }
                     }
@@ -156,7 +156,7 @@ impl Repl {
                     break;
                 },
                 Err(err) => {
-                    eprintln!("Error: {}", err);
+                    eprintln!("Error: {err}");
                     break;
                 },
             }

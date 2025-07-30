@@ -10,6 +10,7 @@ Chronos is a distributed SQL database built from scratch in Rust. It implements 
 - Raft consensus algorithm for distributed log replication and leader election.
 - gRPC-based networking for communication between nodes.
 - Interactive REPL for both local and distributed operation.
+- Dynamic index creation and persistence on `INSERT` operations.
 
 ## Architecture
 
@@ -97,7 +98,6 @@ Chronos is a learning project and is not intended for production use. It current
 Future work may include:
 
 - More comprehensive SQL support (JOINs, aggregations)
-- Improved storage engine with indexing and different backends
 - More robust error handling and recovery
 - Performance optimizations
 
