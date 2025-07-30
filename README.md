@@ -2,84 +2,118 @@
 
 [![Rust CI](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml/badge.svg)](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Crates.io](https://img.shields.io/crates/v/chronos.svg)](https://crates.io/crates/chronos)
 
-Chronos is a distributed SQL database built from scratch in Rust. It implements the Raft consensus algorithm for fault tolerance and consistency across multiple nodes.
+**Chronos is not just another database; it's a journey into the heart of distributed systems, built from the ground up in Rust.** It leverages the power of the Raft consensus algorithm to create a fault-tolerant, consistent SQL database that can withstand node failures without losing data.
 
-## Features
+This project was born from a desire to deeply understand and implement the complex mechanics behind modern distributed databases.
 
-- SQL parser for `CREATE TABLE`, `INSERT`, `SELECT`, `UPDATE`, and `DELETE`.
-- Basic transaction support with `BEGIN`, `COMMIT`, and `ROLLBACK`.
-- Simple, single-node storage engine using CSV files.
-- Raft consensus algorithm for distributed log replication and leader election.
-- gRPC-based networking for communication between nodes.
-- Interactive REPL for both local and distributed operation.
-- Dynamic index creation and persistence on `INSERT` operations.
+---
 
-## Architecture
+## Architecture Overview
 
-Chronos is built with a modular architecture:
+Chronos operates as a cluster of nodes, with one leader and multiple followers. All write operations are routed through the Raft consensus module, ensuring that every change is safely replicated across a majority of nodes before being committed.
 
-1. **Parser**: Converts SQL strings into an Abstract Syntax Tree (AST)
-2. **Executor**: Executes the AST by interacting with the storage engine
-3. **Storage**: Manages data persistence using CSV files
-4. **Raft**: Implements the Raft consensus algorithm for distributed operation
-5. **Network**: Provides gRPC-based communication between nodes
-6. **REPL**: Provides an interactive command-line interface
+```mermaid
+graph TD
+    subgraph "Chronos Cluster"
+        Node1[Leader]
+        Node2[Follower]
+        Node3[Follower]
+    end
 
-## Usage
+    Client -- "SQL (INSERT, UPDATE)" --> Node1
+    Node1 -- "Replicate Log" --> Node2
+    Node1 -- "Replicate Log" --> Node3
+    Node2 -- "Acknowledge" --> Node1
+    Node3 -- "Acknowledge" --> Node1
+    Node1 -- "Commit & Respond" --> Client
+    Client -- "SQL (SELECT)" --> Node2
+    Client -- "SQL (SELECT)" --> Node3
 
-### Starting a Server Node
-
-Each node in the cluster runs as a separate server process. To start the first node:
-
-```bash
-# Start the first node of the cluster
-cargo run -- node --id node1 --address 127.0.0.1:8001 --data-dir data
+    style Node1 fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
-To add more nodes, point them to the existing peers:
+---
+
+## Key Features
+
+- **Distributed Consensus with Raft:** Guarantees data consistency and availability through a robust, from-scratch implementation of the Raft algorithm.
+- **SQL Interface:** Interact with your distributed data using familiar SQL commands (`CREATE TABLE`, `INSERT`, `SELECT`).
+- **Fault Tolerance:** The cluster can survive the failure of minority nodes and continue operating, with a new leader elected automatically.
+- **Persistent Storage:** Data is persisted to disk using a simple CSV-based storage engine, ensuring durability.
+- **Dynamic Indexing:** Supports `CREATE INDEX` and automatically maintains indexes on `INSERT` operations for faster lookups.
+- **Built in Rust:** Leverages Rust's performance, safety, and concurrency features to build a reliable system.
+
+---
+
+## Quick Start
+
+Get a Chronos cluster up and running in minutes.
+
+### 1. Prerequisites
+
+- Rust toolchain (latest stable)
+- `protoc` (Protocol Buffers compiler)
+
+### 2. Clone & Build
 
 ```bash
-# Start a second node and connect it to the first
-cargo run -- node --id node2 --address 127.0.0.1:8002 --data-dir data --peers node1=127.0.0.1:8001
+# Clone the repository
+git clone https://github.com/0xReLogic/Chronos.git
+cd Chronos
+
+# Build the project
+cargo build --release
 ```
 
-### Using the Client REPL
+### 3. Run the Cluster
 
-Chronos provides an interactive REPL to execute SQL commands.
+Open three separate terminals.
 
-**Local Mode (Single-Node):**
+**Terminal 1 (Node 1 - Leader):**
+```bash
+cargo run --release -- server --id 1 --port 8080 --raft-port 9090 --peers 2:localhost:9091 3:localhost:9092
+```
 
-To run a simple, local instance of Chronos without a separate server process, start the client directly. It will use a local CSV storage backend.
+**Terminal 2 (Node 2 - Follower):**
+```bash
+cargo run --release -- server --id 2 --port 8081 --raft-port 9091 --peers 1:localhost:9090 3:localhost:9092
+```
+
+**Terminal 3 (Node 3 - Follower):**
+```bash
+cargo run --release -- server --id 3 --port 8082 --raft-port 9092 --peers 1:localhost:9090 2:localhost:9091
+```
+
+### 4. Connect with the Client
+
+Open a fourth terminal.
 
 ```bash
-cargo run -- client
+cargo run --release -- client --port 8080
 ```
 
-**Distributed Mode:**
+### 5. Execute SQL
 
-To connect to a running cluster, specify the address of the leader node.
-
-```bash
-cargo run -- client --leader 127.0.0.1:8001
-```
-
-## SQL Examples
+Now you can interact with your distributed database!
 
 ```sql
--- Create a table with a primary key
-CREATE TABLE users (id INT PRIMARY KEY, name STRING, age INT);
+chronos> CREATE TABLE users (id INT, name STRING, balance FLOAT);
+Query OK
 
--- Insert some data
-INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30);
-INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25);
+chronos> INSERT INTO users (id, name, balance) VALUES (1, 'Alice', 100.50);
+Query OK
 
--- Select all users
-SELECT id, name, age FROM users;
+chronos> INSERT INTO users (id, name, balance) VALUES (2, 'Bob', 250.75);
+Query OK
 
--- Update a record
-UPDATE users SET age = 31 WHERE name = 'Alice';
+chronos> SELECT id, name, balance FROM users;
++----+-------+---------+
+| id | name  | balance |
++----+-------+---------+
+| 1  | Alice | 100.5   |
+| 2  | Bob   | 250.75  |
++----+-------+---------+
 
 -- Delete a record
 DELETE FROM users WHERE name = 'Bob';
