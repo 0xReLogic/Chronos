@@ -15,20 +15,26 @@ Chronos operates as a cluster of nodes, with one leader and multiple followers. 
 
 ```mermaid
 graph TD
+    Client([Client])
+
     subgraph "Chronos Cluster"
+        direction TB
         Node1[Leader]
         Node2[Follower]
         Node3[Follower]
     end
 
-    Client -- "SQL (INSERT, UPDATE)" --> Node1
-    Node1 -- "Replicate Log" --> Node2
-    Node1 -- "Replicate Log" --> Node3
-    Node2 -- "Acknowledge" --> Node1
-    Node3 -- "Acknowledge" --> Node1
-    Node1 -- "Commit & Respond" --> Client
-    Client -- "SQL (SELECT)" --> Node2
-    Client -- "SQL (SELECT)" --> Node3
+    Client -- "Write (INSERT, etc.)" --> Node1
+    Node1 -- "Replicate" --> Node2
+    Node1 -- "Replicate" --> Node3
+    Node2 -- "Ack" --> Node1
+    Node3 -- "Ack" --> Node1
+    Node1 -- "Commit OK" --> Client
+    
+    Client -- "Read (SELECT)" --> Node2
+    Client -- "Read (SELECT)" --> Node3
+    Node2 -- "Data" --> Client
+    Node3 -- "Data" --> Client
 
     style Node1 fill:#f9f,stroke:#333,stroke-width:2px
 ```
