@@ -12,6 +12,14 @@ log.txt
 build_log.txt
 clippy_log.txt
 
+# Personal notes and logs
+*.md
+!README.md
+!LICENSE.md
+*.txt
+*.sql
+*.zip
+
 # Environment files
 # In case you add environment-specific variables
 .env
