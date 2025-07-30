@@ -23,6 +23,10 @@ BOOLEAN = { ^"BOOLEAN" }
 PRIMARY = { ^"PRIMARY" }
 KEY = { ^"KEY" }
 STRING = { ^"STRING" }
+BEGIN = { ^"BEGIN" }
+COMMIT = { ^"COMMIT" }
+ROLLBACK = { ^"ROLLBACK" }
+TRANSACTION = { ^"TRANSACTION" }
 
 // Identifiers
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -57,9 +61,12 @@ where_clause = { WHERE ~ condition ~ ((AND | OR) ~ condition)* }
 create_table_stmt = { CREATE ~ TABLE ~ table_name ~ column_list ~ ";" }
 insert_stmt = { INSERT ~ INTO ~ table_name ~ ("(" ~ column_name ~ ("," ~ column_name)* ~ ")")? ~ VALUES ~ value_list ~ ";" }
 select_stmt = { SELECT ~ column_selector ~ FROM ~ table_name ~ where_clause? ~ ";" }
+begin_stmt = { BEGIN ~ TRANSACTION? ~ ";" }
+commit_stmt = { COMMIT ~ ";" }
+rollback_stmt = { ROLLBACK ~ ";" }
 
 // SQL statement
-sql_stmt = { create_table_stmt | insert_stmt | select_stmt }
+sql_stmt = { create_table_stmt | insert_stmt | select_stmt | begin_stmt | commit_stmt | rollback_stmt }
 
 // Entry point
 sql = { SOI ~ sql_stmt ~ EOI }

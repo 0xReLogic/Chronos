@@ -14,6 +14,8 @@ pub struct QueryResult {
 pub struct Executor {
     storage: Storage,
     raft_node: Option<std::sync::Weak<Mutex<crate::raft::RaftNode>>>,
+    in_transaction: bool,
+    transaction_buffer: Vec<Statement>,
 }
 
 impl Executor {
@@ -21,6 +23,8 @@ impl Executor {
         Self {
             storage: Storage::new(data_dir),
             raft_node: None,
+            in_transaction: false,
+            transaction_buffer: Vec::new(),
         }
     }
     
@@ -93,7 +97,71 @@ impl Executor {
         }
     }
     
-    fn execute_statement(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
+        fn execute_statement(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
+        match stmt {
+            Statement::Begin => {
+                if self.in_transaction {
+                    return Err(ExecutorError::ExecutionError("Already in a transaction".to_string()));
+                }
+                self.in_transaction = true;
+                self.transaction_buffer.clear();
+                Ok(QueryResult {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::String("Transaction started".to_string())]],
+                })
+            },
+            Statement::Commit => {
+                if !self.in_transaction {
+                    return Err(ExecutorError::ExecutionError("Not in a transaction".to_string()));
+                }
+
+                // To avoid borrow checker issues (E0499), we first collect the statements
+                // into a new Vec. This releases the mutable borrow on `self.transaction_buffer`
+                // before we start calling `self.execute_immediate` which borrows `self` again.
+                let stmts_to_execute: Vec<Statement> = self.transaction_buffer.drain(..).collect();
+
+                for buffered_stmt in stmts_to_execute {
+                    // Note: This is a simplified commit. A real implementation would need a way to roll back
+                    // partially applied changes if one of the statements fails.
+                    self.execute_immediate(buffered_stmt)?;
+                }
+
+                self.in_transaction = false;
+                Ok(QueryResult {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::String("Transaction committed".to_string())]],
+                })
+            },
+            Statement::Rollback => {
+                if !self.in_transaction {
+                    return Err(ExecutorError::ExecutionError("Not in a transaction".to_string()));
+                }
+                self.in_transaction = false;
+                self.transaction_buffer.clear();
+                Ok(QueryResult {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::String("Transaction rolled back".to_string())]],
+                })
+            },
+            // For any other statement
+            _ => {
+                if self.in_transaction {
+                    // Buffer the statement instead of executing it
+                    self.transaction_buffer.push(stmt);
+                    Ok(QueryResult {
+                        columns: vec!["result".to_string()],
+                        rows: vec![vec![Value::String("Statement buffered".to_string())]],
+                    })
+                } else {
+                    // If not in a transaction, execute immediately
+                    self.execute_immediate(stmt)
+                }
+            }
+        }
+    }
+
+    /// Executes a statement directly against the storage engine, bypassing transaction logic.
+    fn execute_immediate(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
         match stmt {
             Statement::CreateTable { table_name, columns } => {
                 self.storage.create_table(&table_name, &columns)
@@ -119,6 +187,10 @@ impl Executor {
                 
                 Ok(result)
             },
+            // Transaction statements should not reach here
+            Statement::Begin | Statement::Commit | Statement::Rollback => {
+                Err(ExecutorError::ExecutionError("Cannot execute transaction control statements directly".to_string()))
+            }
         }
     }
 }

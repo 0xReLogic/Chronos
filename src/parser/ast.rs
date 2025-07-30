@@ -52,6 +52,9 @@ pub enum Statement {
         columns: Vec<String>,
         conditions: Option<Vec<Condition>>,
     },
+    Begin,
+    Commit,
+    Rollback,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
@@ -88,6 +91,15 @@ fn parse_statement(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             }
             Rule::select_stmt => {
                 return parse_select(pair.into_inner());
+            }
+            Rule::begin_stmt => {
+                return Ok(Ast::Statement(Statement::Begin));
+            }
+            Rule::commit_stmt => {
+                return Ok(Ast::Statement(Statement::Commit));
+            }
+            Rule::rollback_stmt => {
+                return Ok(Ast::Statement(Statement::Rollback));
             }
             _ => {}
         }

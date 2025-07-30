@@ -49,11 +49,15 @@ enum Command {
         clean: bool,
     },
     
-    /// Connect to a distributed cluster as a client
+    /// Start the Chronos client REPL
     Client {
-        /// Address of the leader node
+        /// Address of the leader node for distributed mode. If not provided, runs in local mode.
         #[arg(short, long)]
-        leader: String,
+        leader: Option<String>,
+
+        /// Directory to store data in local mode
+        #[arg(short, long, default_value = "data")]
+        data_dir: String,
     },
 }
 
@@ -79,12 +83,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut repl = Repl::new(&data_dir);
             repl.run().await;
         },
-        Command::Client { leader } => {
-            info!("Starting Chronos client connecting to leader at {}", leader);
+        Command::Client { leader, data_dir } => {
+            match leader {
+                Some(leader_address) => {
+                    info!("Starting Chronos client connecting to leader at {}", leader_address);
+                    let mut repl = Repl::with_distributed_mode(&leader_address);
+                    repl.run().await;
+                }
+                None => {
+                    info!("Starting Chronos client in local mode");
 
-            // Start REPL in distributed mode
-            let mut repl = Repl::with_distributed_mode(&leader);
-            repl.run().await;
+                    // Create data directory if it doesn't exist
+                    let data_path = Path::new(&data_dir);
+                    if !data_path.exists() {
+                        std::fs::create_dir_all(data_path)?;
+                    }
+
+                    let mut repl = Repl::new(&data_dir);
+                    repl.run().await;
+                }
+            }
         },
         Command::Node { id, data_dir, address, peers, clean } => {
             info!("Starting Chronos node {} at {}", id, address);
