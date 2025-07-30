@@ -4,7 +4,7 @@ pub mod error;
 use pest::Parser as PestParser;
 use pest_derive::Parser;
 
-pub use self::ast::{Ast, ColumnDefinition, DataType, Statement, Value, Condition};
+pub use self::ast::{Ast, ColumnDefinition, DataType, Statement, Value, Condition, Operator, Assignment};
 pub use self::error::ParserError;
 
 #[derive(Parser)]
@@ -74,6 +74,62 @@ mod tests {
                 assert_eq!(columns, vec!["*"]);
             },
             _ => panic!("Expected Select statement"),
+        }
+    }
+
+    #[test]
+    fn test_update() {
+        let sql = "UPDATE users SET age = 31 WHERE name = 'John';";
+        let ast = Parser::parse(sql).unwrap();
+
+        match ast {
+            Ast::Statement(Statement::Update { table_name, assignments, conditions }) => {
+                assert_eq!(table_name, "users");
+                assert_eq!(assignments.len(), 1);
+                assert_eq!(assignments[0].column_name, "age");
+                assert_eq!(assignments[0].value, Value::Integer(31));
+
+                let conds = conditions.unwrap();
+                assert_eq!(conds.len(), 1);
+                assert_eq!(conds[0].column_name, "name");
+                assert_eq!(conds[0].operator, Operator::Equals);
+                assert_eq!(conds[0].value, Value::String("John".to_string()));
+            },
+            _ => panic!("Expected Update statement"),
+        }
+    }
+
+    #[test]
+    fn test_delete() {
+        let sql = "DELETE FROM users WHERE age > 30;";
+        let ast = Parser::parse(sql).unwrap();
+
+        match ast {
+            Ast::Statement(Statement::Delete { table_name, conditions }) => {
+                assert_eq!(table_name, "users");
+                
+                let conds = conditions.unwrap();
+                assert_eq!(conds.len(), 1);
+                assert_eq!(conds[0].column_name, "age");
+                assert_eq!(conds[0].operator, Operator::GreaterThan);
+                assert_eq!(conds[0].value, Value::Integer(30));
+            },
+            _ => panic!("Expected Delete statement"),
+        }
+    }
+
+    #[test]
+    fn test_create_index() {
+        let sql = "CREATE INDEX idx_users_on_name ON users(name);";
+        let ast = Parser::parse(sql).unwrap();
+
+        match ast {
+            Ast::Statement(Statement::CreateIndex { index_name, table_name, column_name }) => {
+                assert_eq!(index_name, "idx_users_on_name");
+                assert_eq!(table_name, "users");
+                assert_eq!(column_name, "name");
+            },
+            _ => panic!("Expected CreateIndex statement"),
         }
     }
 }

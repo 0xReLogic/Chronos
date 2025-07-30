@@ -19,4 +19,10 @@ pub enum StorageError {
     
     #[error("Value error: {0}")]
     ValueError(String),
+
+    #[error("Index already exists: {0}")]
+    IndexExists(String),
+
+    #[error("Index error: {0}")]
+    IndexError(String),
 }

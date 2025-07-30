@@ -26,14 +26,52 @@ pub enum Value {
     Null,
 }
 
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::String(s) => write!(f, "{}", s),
+            Value::Integer(i) => write!(f, "{}", i),
+            Value::Float(fl) => write!(f, "{}", fl),
+            Value::Boolean(b) => write!(f, "{}", b),
+            Value::Null => write!(f, "NULL"),
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Value::Integer(a), Value::Integer(b)) => a.partial_cmp(b),
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
+            (Value::Integer(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
+            (Value::Float(a), Value::Integer(b)) => a.partial_cmp(&(*b as f64)),
+            (Value::String(a), Value::String(b)) => a.partial_cmp(b),
+            _ => None, // Incomparable types
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
-pub enum Condition {
-    Equals(String, Value),
-    NotEquals(String, Value),
-    LessThan(String, Value),
-    GreaterThan(String, Value),
-    LessThanOrEqual(String, Value),
-    GreaterThanOrEqual(String, Value),
+pub enum Operator {
+    Equals,
+    NotEquals,
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+    GreaterThanOrEqual,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+pub struct Condition {
+    pub column_name: String,
+    pub operator: Operator,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+pub struct Assignment {
+    pub column_name: String,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
@@ -55,6 +93,20 @@ pub enum Statement {
     Begin,
     Commit,
     Rollback,
+    Update {
+        table_name: String,
+        assignments: Vec<Assignment>,
+        conditions: Option<Vec<Condition>>,
+    },
+    Delete {
+        table_name: String,
+        conditions: Option<Vec<Condition>>,
+    },
+    CreateIndex {
+        index_name: String,
+        table_name: String,
+        column_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
@@ -86,6 +138,9 @@ fn parse_statement(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             Rule::create_table_stmt => {
                 return parse_create_table(pair.into_inner());
             }
+            Rule::create_index_stmt => {
+                return parse_create_index(pair.into_inner());
+            }
             Rule::insert_stmt => {
                 return parse_insert(pair.into_inner());
             }
@@ -100,6 +155,12 @@ fn parse_statement(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             }
             Rule::rollback_stmt => {
                 return Ok(Ast::Statement(Statement::Rollback));
+            }
+            Rule::update_stmt => {
+                return parse_update(pair.into_inner());
+            }
+            Rule::delete_stmt => {
+                return parse_delete(pair.into_inner());
             }
             _ => {}
         }
@@ -277,6 +338,33 @@ fn parse_select(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
     Ok(Ast::Statement(Statement::Select { table_name, columns, conditions }))
 }
 
+fn parse_create_index(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut index_name = String::new();
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::identifier => {
+                index_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::CreateIndex {
+        index_name,
+        table_name,
+        column_name,
+    }))
+}
+
 fn parse_where_clause(pairs: Pairs<Rule>) -> Result<Vec<Condition>, ParserError> {
     let mut conditions = Vec::new();
     
@@ -295,16 +383,16 @@ fn parse_where_clause(pairs: Pairs<Rule>) -> Result<Vec<Condition>, ParserError>
 
 fn parse_condition(pairs: Pairs<Rule>) -> Result<Condition, ParserError> {
     let mut column_name = String::new();
-    let mut operator = String::new();
+    let mut operator_str = String::new();
     let mut value = Value::Null;
-    
+
     for pair in pairs {
         match pair.as_rule() {
             Rule::column_name => {
                 column_name = pair.as_str().to_string();
             }
             Rule::comparison_operator => {
-                operator = pair.as_str().to_string();
+                operator_str = pair.as_str().to_string();
             }
             Rule::value => {
                 value = parse_value(pair.into_inner())?;
@@ -312,14 +400,89 @@ fn parse_condition(pairs: Pairs<Rule>) -> Result<Condition, ParserError> {
             _ => {}
         }
     }
-    
-    match operator.as_str() {
-        "=" => Ok(Condition::Equals(column_name, value)),
-        "!=" => Ok(Condition::NotEquals(column_name, value)),
-        "<" => Ok(Condition::LessThan(column_name, value)),
-        ">" => Ok(Condition::GreaterThan(column_name, value)),
-        "<=" => Ok(Condition::LessThanOrEqual(column_name, value)),
-        ">=" => Ok(Condition::GreaterThanOrEqual(column_name, value)),
-        _ => Err(ParserError::InvalidOperator(operator)),
+
+    let operator = match operator_str.as_str() {
+        "=" => Operator::Equals,
+        "!=" => Operator::NotEquals,
+        "<" => Operator::LessThan,
+        ">" => Operator::GreaterThan,
+        "<=" => Operator::LessThanOrEqual,
+        ">=" => Operator::GreaterThanOrEqual,
+        _ => return Err(ParserError::InvalidOperator(operator_str)),
+    };
+
+    Ok(Condition { column_name, operator, value })
+}
+
+fn parse_update(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut assignments = Vec::new();
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::assignment_list => {
+                assignments = parse_assignment_list(pair.into_inner())?;
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
     }
+
+    Ok(Ast::Statement(Statement::Update { table_name, assignments, conditions }))
+}
+
+fn parse_delete(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::Delete { table_name, conditions }))
+}
+
+fn parse_assignment_list(pairs: Pairs<Rule>) -> Result<Vec<Assignment>, ParserError> {
+    let mut assignments = Vec::new();
+
+    for pair in pairs {
+        if let Rule::assignment = pair.as_rule() {
+            assignments.push(parse_assignment(pair.into_inner())?);
+        }
+    }
+
+    Ok(assignments)
+}
+
+fn parse_assignment(pairs: Pairs<Rule>) -> Result<Assignment, ParserError> {
+    let mut column_name = String::new();
+    let mut value = Value::Null;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::value => {
+                value = parse_value(pair.into_inner())?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Assignment { column_name, value })
 }

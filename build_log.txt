@@ -1,111 +1,27 @@
-warning: unused import: `Condition`
- --> src\executor\mod.rs:4:44
-  |
-4 | use crate::parser::{Ast, Statement, Value, Condition};
-  |                                            ^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused import: `Path`
- --> src\storage\csv_storage.rs:4:17
-  |
-4 | use std::path::{Path, PathBuf};
-  |                 ^^^^
-
-warning: unused import: `warn`
- --> src\raft\node.rs:6:19
-  |
-6 | use ::log::{info, warn, error, debug};
-  |                   ^^^^
-
-warning: unused import: `OpenOptions`
- --> src\raft\log.rs:1:21
-  |
-1 | use std::fs::{File, OpenOptions};
-  |                     ^^^^^^^^^^^
-
-warning: unused imports: `SeekFrom`, `Seek`, and `self`
- --> src\raft\log.rs:2:15
-  |
-2 | use std::io::{self, Read, Write, Seek, SeekFrom};
-  |               ^^^^               ^^^^  ^^^^^^^^
-
-warning: unused import: `Path`
- --> src\raft\log.rs:3:17
-  |
-3 | use std::path::{Path, PathBuf};
-  |                 ^^^^
-
-warning: unused import: `Instant`
-  --> src\raft\mod.rs:14:27
-   |
-14 | use std::time::{Duration, Instant};
-   |                           ^^^^^^^
-
-warning: unused import: `warn`
-  --> src\raft\mod.rs:18:19
-   |
-18 | use ::log::{info, warn, error, debug};
-   |                   ^^^^
-
-warning: unused variable: `leader_address`
-  --> src\repl\mod.rs:24:50
-   |
-24 |     pub fn with_distributed_mode(data_dir: &str, leader_address: &str) -> Self {
-   |                                                  ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_leader_address`
-   |
-   = note: `#[warn(unused_variables)]` on by default
-
-warning: unused variable: `log_index`
-   --> src\raft\node.rs:158:13
-    |
-158 |         let log_index = self.log.append(entry)?;
-    |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_log_index`
-
-warning: variable does not need to be mutable
-   --> src\raft\node.rs:339:21
-    |
-339 |                 let mut new_entries = entries.clone();
-    |                     ----^^^^^^^^^^^
-    |                     |
-    |                     help: remove this `mut`
-    |
-    = note: `#[warn(unused_mut)]` on by default
-
-warning: unused variable: `entry`
-   --> src\raft\log.rs:137:30
-    |
-137 |     fn append_to_disk(&self, entry: &LogEntry) -> Result<(), RaftError> {
-    |                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_entry`
-
-warning: unused `Result` that must be used
-  --> src\repl\mod.rs:49:21
-   |
-49 |                     self.rl.add_history_entry(line.as_str());
-   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this `Result` may be an `Err` variant, which should be handled
-   = note: `#[warn(unused_must_use)]` on by default
-help: use `let _ = ...` to ignore the resulting value
-   |
-49 |                     let _ = self.rl.add_history_entry(line.as_str());
-   |                     +++++++
-
-warning: `chronos` (lib) generated 13 warnings (run `cargo fix --lib -p chronos` to apply 9 suggestions)
    Compiling chronos v0.1.0 (D:\Project Utama\Rust\Chronos)
-warning: unused variable: `executor`
-   --> src\main.rs:128:17
+error[E0502]: cannot borrow `self.indices` as mutable because it is also borrowed as immutable
+   --> src\storage\csv_storage.rs:160:39
     |
-128 |             let executor = Arc::new(Mutex::new(Executor::new(&node_data_dir)));
-    |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_executor`
-    |
-    = note: `#[warn(unused_variables)]` on by default
+145 |         let (schema, table_path) = self.get_schema_and_path(table_name)?;
+    |                                    ---- immutable borrow occurs here
+...
+160 |         for (index_name, metadata) in self.indices.iter_mut() {
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+161 |             if metadata.table_name == table_name {
+162 |                 if let Some(column_index_in_schema) = schema.columns.iter().position(|c| c.name == metadata.column_name) {
+    |                                                       -------------- immutable borrow later used here
 
-warning: unused variable: `node`
-   --> src\main.rs:133:17
+error[E0502]: cannot borrow `*self` as immutable because it is also borrowed as mutable
+   --> src\storage\csv_storage.rs:168:42
     |
-133 |             let node = Arc::clone(&raft.node);
-    |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_node`
+160 |         for (index_name, metadata) in self.indices.iter_mut() {
+    |                                       -----------------------
+    |                                       |
+    |                                       mutable borrow occurs here
+    |                                       mutable borrow later used here
+...
+168 |                         let index_path = self.index_path(index_name);
+    |                                          ^^^^ immutable borrow occurs here
 
-warning: `chronos` (bin "chronos") generated 2 warnings
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.05s
+For more information about this error, try `rustc --explain E0502`.
+error: could not compile `chronos` (lib) due to 2 previous errors

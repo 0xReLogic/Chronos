@@ -5,6 +5,9 @@ edition = "2021"
 description = "A SQL database built from scratch in Rust"
 authors = ["Your Name"]
 
+[dev-dependencies]
+tempfile = "3.3.0"
+
 [dependencies]
 # SQL Parser
 pest = "2.7"

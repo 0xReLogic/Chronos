@@ -1,0 +1,28 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running unittests src\lib.rs (target\debug\deps\chronos-c72205926f6d1046.exe)
+
+running 9 tests
+test parser::tests::test_insert ... ok
+test parser::tests::test_create_table ... ok
+test parser::tests::test_select ... ok
+test parser::tests::test_delete ... ok
+test parser::tests::test_update ... ok
+test parser::tests::test_create_index ... ok
+test storage::csv_storage::tests::test_delete_rows ... ok
+test storage::csv_storage::tests::test_update_rows ... ok
+test storage::csv_storage::tests::test_create_and_load_index ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running unittests src\main.rs (target\debug\deps\chronos-64a6962062f42389.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests chronos
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -2,7 +2,7 @@ mod error;
 mod csv_storage;
 
 use std::path::Path;
-use crate::parser::{ColumnDefinition, Value, Condition};
+use crate::parser::ast::{Assignment, ColumnDefinition, Value, Condition};
 use crate::executor::QueryResult;
 
 pub use self::error::StorageError;
@@ -28,11 +28,23 @@ impl Storage {
         self.inner.create_table(table_name, columns)
     }
     
-    pub fn insert(&self, table_name: &str, columns: Option<&[String]>, values: &[Value]) -> Result<(), StorageError> {
+    pub fn insert(&mut self, table_name: &str, columns: Option<&[String]>, values: &[Value]) -> Result<(), StorageError> {
         self.inner.insert(table_name, columns, values)
     }
     
-    pub fn select(&self, table_name: &str, columns: &[String], conditions: Option<&[Condition]>) -> Result<QueryResult, StorageError> {
+    pub fn select(&self, table_name: &str, columns: &[String], conditions: &Option<Vec<Condition>>) -> Result<QueryResult, StorageError> {
         self.inner.select(table_name, columns, conditions)
+    }
+
+    pub fn update(&self, table_name: &str, assignments: &[Assignment], conditions: &Option<Vec<Condition>>) -> Result<(), StorageError> {
+        self.inner.update(table_name, assignments, conditions)
+    }
+
+    pub fn delete(&self, table_name: &str, conditions: &Option<Vec<Condition>>) -> Result<(), StorageError> {
+        self.inner.delete(table_name, conditions)
+    }
+
+    pub fn create_index(&mut self, index_name: &str, table_name: &str, column_name: &str) -> Result<(), StorageError> {
+        self.inner.create_index(index_name, table_name, column_name)
     }
 }

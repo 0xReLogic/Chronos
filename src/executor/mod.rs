@@ -11,6 +11,15 @@ pub struct QueryResult {
     pub rows: Vec<Vec<Value>>,
 }
 
+impl QueryResult {
+    pub fn empty() -> Self {
+        Self {
+            columns: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
+}
+
 pub struct Executor {
     storage: Storage,
     raft_node: Option<std::sync::Weak<Mutex<crate::raft::RaftNode>>>,
@@ -182,13 +191,41 @@ impl Executor {
                 })
             },
             Statement::Select { table_name, columns, conditions } => {
-                let result = self.storage.select(&table_name, &columns, conditions.as_deref())
+                let result = self.storage.select(&table_name, &columns, &conditions)
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
                 
                 Ok(result)
             },
+            Statement::Update { table_name, assignments, conditions } => {
+                self.storage.update(&table_name, &assignments, &conditions)
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                Ok(QueryResult {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::String(format!("Updated rows in {}", table_name))]],
+                })
+            },
+            Statement::Delete { table_name, conditions } => {
+                self.storage.delete(&table_name, &conditions)
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                Ok(QueryResult {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::String(format!("Deleted rows from {}", table_name))]],
+                })
+            },
+            Statement::CreateIndex { index_name, table_name, column_name } => {
+                self.storage.create_index(&index_name, &table_name, &column_name)
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                Ok(QueryResult {
+                    columns: vec!["result".to_string()],
+                    rows: vec![vec![Value::String(format!("Index {} created on table {}", index_name, table_name))]],
+                })
+            },
+
             // Transaction statements should not reach here
-            Statement::Begin | Statement::Commit | Statement::Rollback => {
+                        Statement::Begin | Statement::Commit | Statement::Rollback => {
                 Err(ExecutorError::ExecutionError("Cannot execute transaction control statements directly".to_string()))
             }
         }

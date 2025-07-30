@@ -4,11 +4,12 @@ Chronos is a distributed SQL database built from scratch in Rust. It implements 
 
 ## Features
 
-- SQL parser for basic SQL commands (CREATE TABLE, INSERT, SELECT)
-- Simple storage engine using CSV files
-- Raft consensus algorithm for distributed operation
-- gRPC-based networking for communication between nodes
-- Interactive REPL for both single-node and distributed operation
+- SQL parser for `CREATE TABLE`, `INSERT`, `SELECT`, `UPDATE`, and `DELETE`.
+- Basic transaction support with `BEGIN`, `COMMIT`, and `ROLLBACK`.
+- Simple, single-node storage engine using CSV files.
+- Raft consensus algorithm for distributed log replication and leader election.
+- gRPC-based networking for communication between nodes.
+- Interactive REPL for both local and distributed operation.
 
 ## Architecture
 
@@ -23,33 +24,38 @@ Chronos is built with a modular architecture:
 
 ## Usage
 
-### Single-Node Mode
+### Starting a Server Node
+
+Each node in the cluster runs as a separate server process. To start the first node:
 
 ```bash
-cargo run -- single-node --data-dir data
-```
-
-### Distributed Mode (Multiple Nodes)
-
-Start the first node (each node will create its own subdirectory, e.g., `data/node1`):
-```bash
+# Start the first node of the cluster
 cargo run -- node --id node1 --address 127.0.0.1:8001 --data-dir data
 ```
 
-To start a node from a clean state (useful for testing), use the `--clean` flag:
-```bash
-cargo run -- node --id node1 --address 127.0.0.1:8001 --data-dir data --clean
-```
+To add more nodes, point them to the existing peers:
 
-Start additional nodes:
 ```bash
+# Start a second node and connect it to the first
 cargo run -- node --id node2 --address 127.0.0.1:8002 --data-dir data --peers node1=127.0.0.1:8001
-cargo run -- node --id node3 --address 127.0.0.1:8003 --data-dir data --peers node1=127.0.0.1:8001,node2=127.0.0.1:8002
 ```
 
-### Client Mode
+### Using the Client REPL
 
-Connect to a running cluster:
+Chronos provides an interactive REPL to execute SQL commands.
+
+**Local Mode (Single-Node):**
+
+To run a simple, local instance of Chronos without a separate server process, start the client directly. It will use a local CSV storage backend.
+
+```bash
+cargo run -- client
+```
+
+**Distributed Mode:**
+
+To connect to a running cluster, specify the address of the leader node.
+
 ```bash
 cargo run -- client --leader 127.0.0.1:8001
 ```
@@ -57,15 +63,26 @@ cargo run -- client --leader 127.0.0.1:8001
 ## SQL Examples
 
 ```sql
--- Create a table
-CREATE TABLE users (id INT, name STRING);
+-- Create a table with a primary key
+CREATE TABLE users (id INT PRIMARY KEY, name STRING, age INT);
 
--- Insert data
-INSERT INTO users (id, name) VALUES (1, 'Alice');
-INSERT INTO users (id, name) VALUES (2, 'Bob');
+-- Insert some data
+INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30);
+INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25);
 
--- Query data
-SELECT id, name FROM users;
+-- Select all users
+SELECT id, name, age FROM users;
+
+-- Update a record
+UPDATE users SET age = 31 WHERE name = 'Alice';
+
+-- Delete a record
+DELETE FROM users WHERE name = 'Bob';
+
+-- Use a transaction
+BEGIN;
+INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 40);
+COMMIT;
 ```
 
 ## Development Status
@@ -79,10 +96,9 @@ Chronos is a learning project and is not intended for production use. It current
 
 Future work may include:
 
-- More comprehensive SQL support
-- Improved storage engine with indexing
-- Transaction support
-- Better error handling and recovery
+- More comprehensive SQL support (JOINs, aggregations)
+- Improved storage engine with indexing and different backends
+- More robust error handling and recovery
 - Performance optimizations
 
 ## License

@@ -1,0 +1,975 @@
+warning: variables can be used directly in the `format!` string
+  --> src\parser\ast.rs:32:33
+   |
+32 |             Value::String(s) => write!(f, "{}", s),
+   |                                 ^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+   = note: `#[warn(clippy::uninlined_format_args)]` on by default
+help: change this to
+   |
+32 -             Value::String(s) => write!(f, "{}", s),
+32 +             Value::String(s) => write!(f, "{s}"),
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\parser\ast.rs:33:34
+   |
+33 |             Value::Integer(i) => write!(f, "{}", i),
+   |                                  ^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+33 -             Value::Integer(i) => write!(f, "{}", i),
+33 +             Value::Integer(i) => write!(f, "{i}"),
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\parser\ast.rs:34:33
+   |
+34 |             Value::Float(fl) => write!(f, "{}", fl),
+   |                                 ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+34 -             Value::Float(fl) => write!(f, "{}", fl),
+34 +             Value::Float(fl) => write!(f, "{fl}"),
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\parser\ast.rs:35:34
+   |
+35 |             Value::Boolean(b) => write!(f, "{}", b),
+   |                                  ^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+35 -             Value::Boolean(b) => write!(f, "{}", b),
+35 +             Value::Boolean(b) => write!(f, "{b}"),
+   |
+
+warning: you seem to be trying to use `match` for an equality check. Consider using `if`
+   --> src\parser\ast.rs:266:9
+    |
+266 | /         match pair.as_rule() {
+267 | |             Rule::literal => {
+268 | |                 return parse_literal(pair.into_inner());
+...   |
+271 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#single_match
+    = note: `#[warn(clippy::single_match)]` on by default
+help: try
+    |
+266 ~         if pair.as_rule() == Rule::literal {
+267 +             return parse_literal(pair.into_inner());
+268 +         }
+    |
+
+warning: you seem to be trying to use `match` for an equality check. Consider using `if`
+   --> src\parser\ast.rs:372:9
+    |
+372 | /         match pair.as_rule() {
+373 | |             Rule::condition => {
+374 | |                 let condition = parse_condition(pair.into_inner())?;
+375 | |                 conditions.push(condition);
+376 | |             }
+377 | |             _ => {}
+378 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#single_match
+help: try
+    |
+372 ~         if pair.as_rule() == Rule::condition {
+373 +             let condition = parse_condition(pair.into_inner())?;
+374 +             conditions.push(condition);
+375 +         }
+    |
+
+warning: match expression looks like `matches!` macro
+  --> src\executor\mod.rs:47:28
+   |
+47 |           let is_read_only = match &ast {
+   |  ____________________________^
+48 | |             Ast::Statement(Statement::Select { .. }) => true,
+49 | |             _ => false,
+50 | |         };
+   | |_________^ help: try: `matches!(&ast, Ast::Statement(Statement::Select { .. }))`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#match_like_matches_macro
+   = note: `#[warn(clippy::match_like_matches_macro)]` on by default
+
+warning: variables can be used directly in the `format!` string
+  --> src\executor\mod.rs:70:68
+   |
+70 |                         .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {}", e)))?;
+   |                                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+70 -                         .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {}", e)))?;
+70 +                         .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {e}")))?;
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\executor\mod.rs:74:68
+   |
+74 |                         .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {}", e)))?;
+   |                                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+74 -                         .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {}", e)))?;
+74 +                         .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {e}")))?;
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\executor\mod.rs:98:56
+   |
+98 |             .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {}", e)))?;
+   |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+98 -             .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {}", e)))?;
+98 +             .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {e}")))?;
+   |
+
+warning: variables can be used directly in the `format!` string
+   --> src\executor\mod.rs:181:51
+    |
+181 |                     rows: vec![vec![Value::String(format!("Table {} created", table_name))]],
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+181 -                     rows: vec![vec![Value::String(format!("Table {} created", table_name))]],
+181 +                     rows: vec![vec![Value::String(format!("Table {table_name} created"))]],
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\executor\mod.rs:190:51
+    |
+190 |                     rows: vec![vec![Value::String(format!("Inserted into {}", table_name))]],
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+190 -                     rows: vec![vec![Value::String(format!("Inserted into {}", table_name))]],
+190 +                     rows: vec![vec![Value::String(format!("Inserted into {table_name}"))]],
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\executor\mod.rs:205:51
+    |
+205 |                     rows: vec![vec![Value::String(format!("Updated rows in {}", table_name))]],
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+205 -                     rows: vec![vec![Value::String(format!("Updated rows in {}", table_name))]],
+205 +                     rows: vec![vec![Value::String(format!("Updated rows in {table_name}"))]],
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\executor\mod.rs:214:51
+    |
+214 |                     rows: vec![vec![Value::String(format!("Deleted rows from {}", table_name))]],
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+214 -                     rows: vec![vec![Value::String(format!("Deleted rows from {}", table_name))]],
+214 +                     rows: vec![vec![Value::String(format!("Deleted rows from {table_name}"))]],
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\executor\mod.rs:223:51
+    |
+223 |                     rows: vec![vec![Value::String(format!("Index {} created on table {}", index_name, table_name))]],
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+223 -                     rows: vec![vec![Value::String(format!("Index {} created on table {}", index_name, table_name))]],
+223 +                     rows: vec![vec![Value::String(format!("Index {index_name} created on table {table_name}"))]],
+    |
+
+warning: variables can be used directly in the `format!` string
+  --> src\storage\csv_storage.rs:42:13
+   |
+42 |             eprintln!("Warning: Could not load schemas: {}", e);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+42 -             eprintln!("Warning: Could not load schemas: {}", e);
+42 +             eprintln!("Warning: Could not load schemas: {e}");
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\storage\csv_storage.rs:46:13
+   |
+46 |             eprintln!("Warning: Could not load indices: {}", e);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+46 -             eprintln!("Warning: Could not load indices: {}", e);
+46 +             eprintln!("Warning: Could not load indices: {e}");
+   |
+
+warning: this `map_or` can be simplified
+  --> src\storage\csv_storage.rs:63:34
+   |
+63 |             if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_map_or
+   = note: `#[warn(clippy::unnecessary_map_or)]` on by default
+help: use is_some_and instead
+   |
+63 -             if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+63 +             if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\storage\csv_storage.rs:85:43
+   |
+85 |         let schema_path = schema_dir.join(format!("{}.json", table_name));
+   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+85 -         let schema_path = schema_dir.join(format!("{}.json", table_name));
+85 +         let schema_path = schema_dir.join(format!("{table_name}.json"));
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\storage\csv_storage.rs:96:28
+   |
+96 |         self.data_dir.join(format!("{}.csv", table_name))
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+96 -         self.data_dir.join(format!("{}.csv", table_name))
+96 +         self.data_dir.join(format!("{table_name}.csv"))
+   |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:101:24
+    |
+101 |         index_dir.join(format!("{}.idx", index_name))
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+101 -         index_dir.join(format!("{}.idx", index_name))
+101 +         index_dir.join(format!("{index_name}.idx"))
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:110:54
+    |
+110 |             .ok_or_else(|| StorageError::SchemaError(format!("Schema not found for table {}", table_name)))?;
+    |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+110 -             .ok_or_else(|| StorageError::SchemaError(format!("Schema not found for table {}", table_name)))?;
+110 +             .ok_or_else(|| StorageError::SchemaError(format!("Schema not found for table {table_name}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:119:104
+    |
+119 |             DataType::Int => s.parse::<i64>().map(Value::Integer).map_err(|_| StorageError::ValueError(format!("Invalid integer: {}", s))),
+    |                                                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+119 -             DataType::Int => s.parse::<i64>().map(Value::Integer).map_err(|_| StorageError::ValueError(format!("Invalid integer: {}", s))),
+119 +             DataType::Int => s.parse::<i64>().map(Value::Integer).map_err(|_| StorageError::ValueError(format!("Invalid integer: {s}"))),
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:120:104
+    |
+120 |             DataType::Float => s.parse::<f64>().map(Value::Float).map_err(|_| StorageError::ValueError(format!("Invalid float: {}", s))),
+    |                                                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+120 -             DataType::Float => s.parse::<f64>().map(Value::Float).map_err(|_| StorageError::ValueError(format!("Invalid float: {}", s))),
+120 +             DataType::Float => s.parse::<f64>().map(Value::Float).map_err(|_| StorageError::ValueError(format!("Invalid float: {s}"))),
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:121:109
+    |
+121 | ...ue::Boolean).map_err(|_| StorageError::ValueError(format!("Invalid boolean: {}", s))),
+    |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+121 -             DataType::Boolean => s.parse::<bool>().map(Value::Boolean).map_err(|_| StorageError::ValueError(format!("Invalid boolean: {}", s))),
+121 +             DataType::Boolean => s.parse::<bool>().map(Value::Boolean).map_err(|_| StorageError::ValueError(format!("Invalid boolean: {s}"))),
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:128:50
+    |
+128 |             return Err(StorageError::SchemaError(format!("Table {} already exists", table_name)));
+    |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+128 -             return Err(StorageError::SchemaError(format!("Table {} already exists", table_name)));
+128 +             return Err(StorageError::SchemaError(format!("Table {table_name} already exists")));
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:155:61
+    |
+155 |         let values_str: Vec<String> = values.iter().map(|v| format!("{}", v)).collect();
+    |                                                             ^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+155 -         let values_str: Vec<String> = values.iter().map(|v| format!("{}", v)).collect();
+155 +         let values_str: Vec<String> = values.iter().map(|v| format!("{v}")).collect();
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:183:59
+    |
+183 |                     .map_err(|e| StorageError::IndexError(format!("Failed to serialize updated index: {}", e)))?;
+    |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+183 -                     .map_err(|e| StorageError::IndexError(format!("Failed to serialize updated index: {}", e)))?;
+183 +                     .map_err(|e| StorageError::IndexError(format!("Failed to serialize updated index: {e}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:220:97
+    |
+220 | ...   let cell_value = record.get(col_idx).ok_or_else(|| StorageError::ValueError(format!("Invalid column index: {}", col_idx)))?;
+    |                                                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+220 -                     let cell_value = record.get(col_idx).ok_or_else(|| StorageError::ValueError(format!("Invalid column index: {}", col_idx)))?;
+220 +                     let cell_value = record.get(col_idx).ok_or_else(|| StorageError::ValueError(format!("Invalid column index: {col_idx}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:236:98
+    |
+236 | ...k_or_else(|| StorageError::ValueError(format!("Record missing value for index {}", column_index)))?;
+    |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+236 -             let cell_value_str = record.get(column_index).ok_or_else(|| StorageError::ValueError(format!("Record missing value for index {}", column_index)))?;
+236 +             let cell_value_str = record.get(column_index).ok_or_else(|| StorageError::ValueError(format!("Record missing value for index {column_index}")))?;
+    |
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> src\storage\csv_storage.rs:268:84
+    |
+268 |                 Some(conds) if !conds.is_empty() => self.check_conditions(&record, &schema, &column_indices, conds)?,
+    |                                                                                    ^^^^^^^ help: change this to: `schema`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_borrow
+    = note: `#[warn(clippy::needless_borrow)]` on by default
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> src\storage\csv_storage.rs:303:84
+    |
+303 |                 Some(conds) if !conds.is_empty() => self.check_conditions(&record, &schema, &column_indices, conds)?,
+    |                                                                                    ^^^^^^^ help: change this to: `schema`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_borrow
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:335:59
+    |
+335 |                     .map_err(|e| StorageError::IndexError(format!("Failed to deserialize index '{}': {}", index_name, e)))?;
+    |                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+335 -                     .map_err(|e| StorageError::IndexError(format!("Failed to deserialize index '{}': {}", index_name, e)))?;
+335 +                     .map_err(|e| StorageError::IndexError(format!("Failed to deserialize index '{index_name}': {e}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\storage\csv_storage.rs:379:51
+    |
+379 |             .map_err(|e| StorageError::IndexError(format!("Failed to serialize index: {}", e)))?;
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+379 -             .map_err(|e| StorageError::IndexError(format!("Failed to serialize index: {}", e)))?;
+379 +             .map_err(|e| StorageError::IndexError(format!("Failed to serialize index: {e}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+  --> src\repl\mod.rs:71:41
+   |
+71 | ...                   print!("{:width$}", col, width = header_width);
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+71 -                                         print!("{:width$}", col, width = header_width);
+71 +                                         print!("{col:header_width$}");
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\repl\mod.rs:92:45
+   |
+92 | ...                   print!("{:width$}", display, width = header_width);
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+92 -                                             print!("{:width$}", display, width = header_width);
+92 +                                             print!("{display:header_width$}");
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\repl\mod.rs:98:37
+   |
+98 | ...                   eprintln!("Network error: {}", e);
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+98 -                                     eprintln!("Network error: {}", e);
+98 +                                     eprintln!("Network error: {e}");
+   |
+
+warning: variables can be used directly in the `format!` string
+   --> src\repl\mod.rs:114:45
+    |
+114 | ...                   print!("{:width$}", col, width = header_width);
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+114 -                                             print!("{:width$}", col, width = header_width);
+114 +                                             print!("{col:header_width$}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\repl\mod.rs:134:49
+    |
+134 | ...                   print!("{:width$}", display, width = header_width);
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+134 -                                                 print!("{:width$}", display, width = header_width);
+134 +                                                 print!("{display:header_width$}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\repl\mod.rs:140:41
+    |
+140 | ...                   eprintln!("Error: {}", e);
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+140 -                                         eprintln!("Error: {}", e);
+140 +                                         eprintln!("Error: {e}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\repl\mod.rs:145:33
+    |
+145 | ...                   eprintln!("Parse error: {}", e);
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+145 -                                 eprintln!("Parse error: {}", e);
+145 +                                 eprintln!("Parse error: {e}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\repl\mod.rs:159:21
+    |
+159 |                     eprintln!("Error: {}", err);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+159 -                     eprintln!("Error: {}", err);
+159 +                     eprintln!("Error: {err}");
+    |
+
+warning: manually reimplementing `div_ceil`
+   --> src\raft\node.rs:117:30
+    |
+117 |         let majority_count = (self.peers.len() + 1) / 2 + 1;
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using `.div_ceil()`: `self.peers.len().div_ceil(2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#manual_div_ceil
+    = note: `#[warn(clippy::manual_div_ceil)]` on by default
+
+warning: this `if` statement can be collapsed
+   --> src\raft\node.rs:274:9
+    |
+274 | / ...   if self.state.role == NodeRole::Candidate && term == self.state.current_term {
+275 | | ...       if vote_granted {
+276 | | ...           // Count the vote
+277 | | ...           self.votes_received.insert(String::from("peer"), true); // This is a placeholder, in a real implementation we'd use the pee...
+...   |
+286 | | ...   }
+    | |_______^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+    = note: `#[warn(clippy::collapsible_if)]` on by default
+help: collapse nested if block
+    |
+274 ~         if self.state.role == NodeRole::Candidate && term == self.state.current_term
+275 ~             && vote_granted {
+276 |                 // Count the vote
+...
+284 |                 }
+285 ~             }
+    |
+
+warning: manually reimplementing `div_ceil`
+   --> src\raft\node.rs:280:36
+    |
+280 |                 let votes_needed = (self.peers.len() + 1) / 2 + 1; // +1 for self
+    |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using `.div_ceil()`: `self.peers.len().div_ceil(2)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#manual_div_ceil
+
+warning: this `map_or` can be simplified
+   --> src\raft\node.rs:340:13
+    |
+340 |             self.log.term_at(prev_log_index).map_or(false, |t| t == prev_log_term)
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_map_or
+help: use a standard comparison instead
+    |
+340 -             self.log.term_at(prev_log_index).map_or(false, |t| t == prev_log_term)
+340 +             self.log.term_at(prev_log_index) == Some(prev_log_term)
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\raft\node.rs:525:9
+    |
+525 |         debug!("Sending message to peer {}: {:?}", peer_id, message);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+525 -         debug!("Sending message to peer {}: {:?}", peer_id, message);
+525 +         debug!("Sending message to peer {peer_id}: {message:?}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\raft\node.rs:529:52
+    |
+529 |             .ok_or_else(|| RaftError::NetworkError(format!("Unknown peer: {}", peer_id)))?;
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+529 -             .ok_or_else(|| RaftError::NetworkError(format!("Unknown peer: {}", peer_id)))?;
+529 +             .ok_or_else(|| RaftError::NetworkError(format!("Unknown peer: {peer_id}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\raft\node.rs:545:25
+    |
+545 |                         error!("Failed to send RequestVote to {}: {}", peer_id_clone, e);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+545 -                         error!("Failed to send RequestVote to {}: {}", peer_id_clone, e);
+545 +                         error!("Failed to send RequestVote to {peer_id_clone}: {e}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\raft\node.rs:550:25
+    |
+550 |                         error!("Failed to send AppendEntries to {}: {}", peer_id_clone, e);
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+550 -                         error!("Failed to send AppendEntries to {}: {}", peer_id_clone, e);
+550 +                         error!("Failed to send AppendEntries to {peer_id_clone}: {e}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\raft\node.rs:554:21
+    |
+554 |                     error!("Cannot send response message to peer: {:?}", message_clone);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+554 -                     error!("Cannot send response message to peer: {:?}", message_clone);
+554 +                     error!("Cannot send response message to peer: {message_clone:?}");
+    |
+
+warning: variables can be used directly in the `format!` string
+  --> src\raft\log.rs:38:21
+   |
+38 |                     eprintln!("Error loading log from disk: {}", e);
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+38 -                     eprintln!("Error loading log from disk: {}", e);
+38 +                     eprintln!("Error loading log from disk: {e}");
+   |
+
+warning: unnecessary closure used to substitute value for `Option::None`
+  --> src\raft\log.rs:82:19
+   |
+82 |         let end = end.unwrap_or_else(|| self.entries.len() as u64);
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_lazy_evaluations
+   = note: `#[warn(clippy::unnecessary_lazy_evaluations)]` on by default
+help: use `unwrap_or` instead
+   |
+82 -         let end = end.unwrap_or_else(|| self.entries.len() as u64);
+82 +         let end = end.unwrap_or(self.entries.len() as u64);
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\raft\mod.rs:83:31
+   |
+83 |                     Err(e) => error!("Error handling message: {}", e),
+   |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+83 -                     Err(e) => error!("Error handling message: {}", e),
+83 +                     Err(e) => error!("Error handling message: {e}"),
+   |
+
+warning: variables can be used directly in the `format!` string
+   --> src\raft\mod.rs:110:35
+    |
+110 |                         Err(e) => error!("Error sending heartbeats: {}", e),
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+110 -                         Err(e) => error!("Error sending heartbeats: {}", e),
+110 +                         Err(e) => error!("Error sending heartbeats: {e}"),
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\raft\mod.rs:118:39
+    |
+118 | ...                   Err(e) => error!("Error starting election: {}", e),
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+118 -                             Err(e) => error!("Error starting election: {}", e),
+118 +                             Err(e) => error!("Error starting election: {e}"),
+    |
+
+warning: variables can be used directly in the `format!` string
+  --> src\network\mod.rs:24:49
+   |
+24 |             NetworkError::ConnectionError(e) => write!(f, "Connection error: {}", e),
+   |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+24 -             NetworkError::ConnectionError(e) => write!(f, "Connection error: {}", e),
+24 +             NetworkError::ConnectionError(e) => write!(f, "Connection error: {e}"),
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\network\mod.rs:25:42
+   |
+25 |             NetworkError::RpcError(e) => write!(f, "RPC error: {}", e),
+   |                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+25 -             NetworkError::RpcError(e) => write!(f, "RPC error: {}", e),
+25 +             NetworkError::RpcError(e) => write!(f, "RPC error: {e}"),
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\network\mod.rs:26:48
+   |
+26 |             NetworkError::TransportError(e) => write!(f, "Transport error: {}", e),
+   |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+26 -             NetworkError::TransportError(e) => write!(f, "Transport error: {}", e),
+26 +             NetworkError::TransportError(e) => write!(f, "Transport error: {e}"),
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\network\server.rs:57:17
+   |
+57 |                 error!("Error handling RequestVote: {}", e);
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+57 -                 error!("Error handling RequestVote: {}", e);
+57 +                 error!("Error handling RequestVote: {e}");
+   |
+
+warning: variables can be used directly in the `format!` string
+  --> src\network\server.rs:58:45
+   |
+58 |                 return Err(Status::internal(format!("Internal error: {}", e)));
+   |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+58 -                 return Err(Status::internal(format!("Internal error: {}", e)));
+58 +                 return Err(Status::internal(format!("Internal error: {e}")));
+   |
+
+warning: variables can be used directly in the `format!` string
+   --> src\network\server.rs:109:17
+    |
+109 |                 error!("Error handling AppendEntries: {}", e);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+109 -                 error!("Error handling AppendEntries: {}", e);
+109 +                 error!("Error handling AppendEntries: {e}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\network\server.rs:110:45
+    |
+110 |                 return Err(Status::internal(format!("Internal error: {}", e)));
+    |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+110 -                 return Err(Status::internal(format!("Internal error: {}", e)));
+110 +                 return Err(Status::internal(format!("Internal error: {e}")));
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\network\server.rs:142:17
+    |
+142 |                 error!("SQL parse error: {}", e);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+142 -                 error!("SQL parse error: {}", e);
+142 +                 error!("SQL parse error: {e}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\network\server.rs:145:28
+    |
+145 |                     error: format!("Parse error: {}", e),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+145 -                     error: format!("Parse error: {}", e),
+145 +                     error: format!("Parse error: {e}"),
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\network\server.rs:169:43
+    |
+169 |             .map_err(|e| Status::internal(format!("Serialization error: {}", e)))?;
+    |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+169 -             .map_err(|e| Status::internal(format!("Serialization error: {}", e)))?;
+169 +             .map_err(|e| Status::internal(format!("Serialization error: {e}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\network\server.rs:174:47
+    |
+174 |                 .map_err(|e| Status::internal(format!("Raft error: {}", e)))?;
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+174 -                 .map_err(|e| Status::internal(format!("Raft error: {}", e)))?;
+174 +                 .map_err(|e| Status::internal(format!("Raft error: {e}")))?;
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\network\server.rs:182:47
+    |
+182 |                 .map_err(|e| Status::internal(format!("Execution error: {}", e)))?
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+182 -                 .map_err(|e| Status::internal(format!("Execution error: {}", e)))?
+182 +                 .map_err(|e| Status::internal(format!("Execution error: {e}")))?
+    |
+
+warning: `chronos` (lib) generated 68 warnings (run `cargo clippy --fix --lib -p chronos` to apply 67 suggestions)
+warning: variables can be used directly in the `format!` string
+  --> src\main.rs:89:21
+   |
+89 |                     info!("Starting Chronos client connecting to leader at {}", leader_address);
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+   = note: `#[warn(clippy::uninlined_format_args)]` on by default
+help: change this to
+   |
+89 -                     info!("Starting Chronos client connecting to leader at {}", leader_address);
+89 +                     info!("Starting Chronos client connecting to leader at {leader_address}");
+   |
+
+warning: variables can be used directly in the `format!` string
+   --> src\main.rs:108:13
+    |
+108 |             info!("Starting Chronos node {} at {}", id, address);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+108 -             info!("Starting Chronos node {} at {}", id, address);
+108 +             info!("Starting Chronos node {id} at {address}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\main.rs:110:33
+    |
+110 |             let node_data_dir = format!("{}/{}", data_dir, id);
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+110 -             let node_data_dir = format!("{}/{}", data_dir, id);
+110 +             let node_data_dir = format!("{data_dir}/{id}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\main.rs:139:29
+    |
+139 | ...                   info!("Added peer: {} at {}", peer_id, peer_addr);
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+139 -                             info!("Added peer: {} at {}", peer_id, peer_addr);
+139 +                             info!("Added peer: {peer_id} at {peer_addr}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\main.rs:146:33
+    |
+146 |             let node_data_dir = format!("{}/{}", data_dir, id);
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+146 -             let node_data_dir = format!("{}/{}", data_dir, id);
+146 +             let node_data_dir = format!("{data_dir}/{id}");
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> src\main.rs:163:13
+    |
+163 |             info!("gRPC server listening on {}", addr);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+163 -             info!("gRPC server listening on {}", addr);
+163 +             info!("gRPC server listening on {addr}");
+    |
+
+warning: `chronos` (bin "chronos") generated 6 warnings (run `cargo clippy --fix --bin "chronos"` to apply 6 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s
