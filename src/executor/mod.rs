@@ -44,10 +44,7 @@ impl Executor {
     pub fn execute(&mut self, ast: Ast) -> Result<QueryResult, ExecutorError> {
         // In a distributed setting, we should check if this is a read-only query
         // Read-only queries can be executed directly, but write queries should go through Raft
-        let is_read_only = match &ast {
-            Ast::Statement(Statement::Select { .. }) => true,
-            _ => false,
-        };
+        let is_read_only = matches!(&ast, Ast::Statement(Statement::Select { .. }));
         
         if is_read_only {
             // Read-only queries can be executed directly
