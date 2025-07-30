@@ -1,1 +1,30 @@
-/target
+# Rust & Cargo
+# Ignore compiled artifacts and dependencies
+/target/
+
+# The Cargo.lock file is intended to be checked into source control for applications
+# to ensure reproducible builds. For libraries, it is often ignored.
+# Since Chronos is an application, we will NOT ignore Cargo.lock.
+
+# Runtime Data & Logs
+# Ignore the data directory created by nodes
+/data/
+
+# Ignore log files
+log.txt
+*.log
+
+# Environment files
+# In case you add environment-specific variables
+.env
+.env.*
+
+# Editor & IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS-specific files
+.DS_Store
+Thumbs.db
