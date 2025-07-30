@@ -1,6 +1,6 @@
 # Chronos: A Distributed SQL Database in Rust
 
-[![Rust CI](https://github.com/YOUR_USERNAME/chronos/actions/workflows/rust.yml/badge.svg)](https://github.com/YOUR_USERNAME/chronos/actions/workflows/rust.yml)
+[![Rust CI](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml/badge.svg)](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Crates.io](https://img.shields.io/crates/v/chronos.svg)](https://crates.io/crates/chronos)
 
