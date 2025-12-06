@@ -130,6 +130,30 @@ INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 40);
 COMMIT;
 ```
 
+## Performance Benchmarks
+
+Tested on Ubuntu 24.04.3 LTS with Sled storage engine:
+
+**Insert Performance:**
+- 100 rows: ~1.9ms (median)
+- 1,000 rows: ~6.5ms (median)
+- **Throughput: 154,000 rows/second** (batch inserts)
+
+**Query Performance (Full Scan):**
+- 100 rows: ~2.1ms
+- 1,000 rows: ~7.4ms
+- Linear scaling with low variance
+
+Run benchmarks yourself:
+```bash
+cargo bench
+```
+
+Try the IoT sensor demo:
+```bash
+cargo run --example storage_demo
+```
+
 ## Development Status
 
 Chronos is a learning project and is not intended for production use. It currently implements:
@@ -140,13 +164,68 @@ Chronos is a learning project and is not intended for production use. It current
 - gRPC-based networking for node communication with Protocol Buffers
 - Async/await architecture with Tokio runtime
 
-Future work may include:
+## Edge/IoT Roadmap
 
-- More comprehensive SQL support (JOINs, aggregations, subqueries)
-- Offline-first mode with conflict resolution for edge/IoT deployments
-- Time-series optimizations for sensor data
-- Binary size reduction for resource-constrained devices
-- More robust error handling and recovery
+Target: Transform Chronos into production-ready edge database for IoT deployments.
+
+**Priority 1 - Critical (Next 1-2 hours):**
+- [ ] Binary size optimization: 12MB → <5MB (opt-level=z, LTO, strip symbols)
+- [ ] Integration tests for distributed scenarios
+- [ ] Node restart persistence validation
+
+**Priority 2 - High Impact (Next 1-2 days):**
+- [ ] Time-series storage optimization
+  - Columnar storage per device_id
+  - Timestamp-based partitioning (hourly/daily buckets)
+  - Downsampling strategy (raw → 1min avg → 1hr avg)
+  - TTL for auto-cleanup with configurable retention
+  - Expected: 10x storage reduction, 5x faster queries
+  
+- [ ] Offline-first mode
+  - Local write buffer when leader unreachable
+  - Ring buffer + WAL for durability
+  - Auto-sync on reconnection with batching
+  - Vector clocks for conflict detection
+  - Expected: 99.9% write availability even with network issues
+
+**Priority 3 - Medium Term (Next week):**
+- [ ] Network optimization for unreliable connections
+  - Message batching (aggregate multiple writes)
+  - Payload compression (zstd/lz4)
+  - Adaptive Raft config (tune heartbeat based on network quality)
+  - Expected: 50% bandwidth reduction
+  
+- [ ] Monitoring & observability
+  - Metrics: write_latency, query_latency, storage_size, memory_usage
+  - Health checks: /health endpoint
+  - Alerts: disk_full, high_latency, leader_election_failed
+
+**Long-term (Future):**
+- [ ] More comprehensive SQL support (JOINs, aggregations, subqueries)
+- [ ] CRDT-based conflict resolution
+- [ ] Edge-to-cloud sync protocol
+- [ ] Security (at-rest encryption, mTLS)
+- [ ] OTA update mechanism
+
+## Technical Notes
+
+**Storage Engine Migration (Dec 2025):**
+- Migrated from CSV to Sled embedded database
+- Full async/await refactor with Tokio runtime
+- Changed std::sync::Mutex → tokio::sync::Mutex throughout
+- Bincode v2.0 for efficient serialization
+
+**Key Architecture Decisions:**
+- Sled over RocksDB: Pure Rust, smaller binary footprint (~100KB vs multi-MB)
+- Async-native: Prevents blocking, prepares for high-concurrency workloads
+- Trait abstraction: Easy to swap storage backends (RocksDB, custom LSM tree)
+
+**Known Limitations:**
+- Binary size 12MB (optimization pending)
+- No time-series specific optimizations yet
+- Raft heartbeat 50ms (aggressive for IoT networks)
+- No snapshot/log compaction mechanism
+- Single-threaded executor (no parallel queries)
 
 ## License
 

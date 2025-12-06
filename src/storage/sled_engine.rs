@@ -230,12 +230,13 @@ impl StorageEngine for SledEngine {
 mod tests {
     use super::*;
     use crate::parser::Value;
+    use crate::storage::{Column, DataType, TableSchema};
     use tempfile::TempDir;
     
     #[tokio::test]
     async fn test_sled_create_table() {
         let temp_dir = TempDir::new().unwrap();
-        let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap().to_string()).unwrap();
+        let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap()).unwrap();
         
         let schema = TableSchema {
             name: "users".to_string(),
@@ -260,7 +261,7 @@ mod tests {
     #[tokio::test]
     async fn test_sled_insert_query() {
         let temp_dir = TempDir::new().unwrap();
-        let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap().to_string()).unwrap();
+        let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap()).unwrap();
         
         let schema = TableSchema {
             name: "sensors".to_string(),
@@ -279,7 +280,7 @@ mod tests {
         engine.create_table("sensors", schema).await.unwrap();
         
         let mut row = Row::new();
-        row.insert("sensor_id".to_string(), Value::Int(1));
+        row.insert("sensor_id".to_string(), Value::Integer(1));
         row.insert("temperature".to_string(), Value::Float(25.5));
         
         engine.insert("sensors", vec![row]).await.unwrap();
