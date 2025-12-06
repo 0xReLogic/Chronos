@@ -12,9 +12,9 @@ pub struct Repl {
 }
 
 impl Repl {
-    pub fn new(data_dir: &str) -> Self {
+    pub async fn new(data_dir: &str) -> Self {
         Self {
-            executor: Some(Executor::new(data_dir)),
+            executor: Some(Executor::new(data_dir).await),
             rl: DefaultEditor::new().expect("Failed to create line editor"),
             distributed_mode: false,
             sql_client: None,
@@ -106,7 +106,7 @@ impl Repl {
                         let executor = self.executor.as_mut().expect("Executor not initialized in single-node mode");
                         match Parser::parse(&line) {
                             Ok(ast) => {
-                                match executor.execute(ast) {
+                                match executor.execute(ast).await {
                                     Ok(result) => {
                                         // Print column headers
                                         let header_width = 20;

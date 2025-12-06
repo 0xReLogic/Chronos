@@ -1,6 +1,7 @@
 use std::path::Path;
 use clap::{Parser, Subcommand};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use chronos::Executor;
 use env_logger::Env;
 use log::info;
@@ -80,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             
             // Start REPL
-            let mut repl = Repl::new(&data_dir);
+            let mut repl = Repl::new(&data_dir).await;
             repl.run().await;
         },
         Command::Client { leader, data_dir } => {
@@ -99,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         std::fs::create_dir_all(data_path)?;
                     }
 
-                    let mut repl = Repl::new(&data_dir);
+                    let mut repl = Repl::new(&data_dir).await;
                     repl.run().await;
                 }
             }
@@ -147,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::create_dir_all(&node_data_dir)?;
             
             // Create executor
-            let executor = Arc::new(Mutex::new(Executor::new(&node_data_dir)));
+            let executor = Arc::new(Mutex::new(Executor::new(&node_data_dir).await));
             
             // Start Raft
             let raft_config = RaftConfig::new(&id, &node_data_dir);

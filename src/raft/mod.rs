@@ -10,10 +10,10 @@ pub use self::log::{LogEntry, Log};
 pub use self::state::{NodeState, NodeRole};
 pub use self::config::RaftConfig;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 // Use external log crate, not our own log module
 use ::log::{info, error, debug};
 
@@ -69,7 +69,7 @@ impl Raft {
         
         // Store the sender in the node
         {
-            let mut node_lock = node.lock().unwrap();
+            let mut node_lock = node.lock().await;
             node_lock.set_message_sender(tx.clone());
         }
         
@@ -77,7 +77,7 @@ impl Raft {
         let node_clone = Arc::clone(&node);
         tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
-                let mut node = node_clone.lock().unwrap();
+                let mut node = node_clone.lock().await;
                 match node.handle_message(message) {
                     Ok(_) => {},
                     Err(e) => error!("Error handling message: {e}"),
@@ -90,7 +90,7 @@ impl Raft {
         tokio::spawn(async move {
             loop {
                 let timeout = {
-                    let node = node_clone.lock().unwrap();
+                    let node = node_clone.lock().await;
                     if node.is_leader() {
                         // Leaders don't have election timeouts
                         Duration::from_millis(node.config().heartbeat_interval)
@@ -102,7 +102,7 @@ impl Raft {
                 
                 sleep(timeout).await;
                 
-                let mut node = node_clone.lock().unwrap();
+                let mut node = node_clone.lock().await;
                 if node.is_leader() {
                     // Send heartbeats
                     match node.send_heartbeats() {
@@ -125,8 +125,9 @@ impl Raft {
         Ok(())
     }
     
-    pub fn submit_command(&self, command: Vec<u8>) -> Result<(), RaftError> {
-        let mut node = self.node.lock().unwrap();
-        node.submit_command(command)
+    pub fn submit_command(&self, _command: Vec<u8>) -> Result<(), RaftError> {
+        // This is a sync wrapper - actual submission happens through async lock in caller
+        // Caller should lock the node and call RaftNode::submit_command directly
+        unimplemented!("Use direct RaftNode::submit_command via lock instead")
     }
 }

@@ -1,8 +1,8 @@
 mod error;
 
-use std::sync::Mutex;
-use crate::parser::{Ast, Statement, Value};
-use crate::storage::Storage;
+use tokio::sync::Mutex;
+use crate::parser::{Ast, Statement, Value, ColumnDefinition, DataType as ParserDataType, Condition, Operator};
+use crate::storage::{create_storage_engine, StorageEngine, StorageConfig, TableSchema, Column, DataType, Row, Filter, FilterOp};
 
 pub use self::error::ExecutorError;
 
@@ -21,16 +21,22 @@ impl QueryResult {
 }
 
 pub struct Executor {
-    storage: Storage,
+    storage: Box<dyn StorageEngine>,
     raft_node: Option<std::sync::Weak<Mutex<crate::raft::RaftNode>>>,
     in_transaction: bool,
     transaction_buffer: Vec<Statement>,
 }
 
 impl Executor {
-    pub fn new(data_dir: &str) -> Self {
+    pub async fn new(data_dir: &str) -> Self {
+        let config = StorageConfig::Sled { data_dir: data_dir.to_string() };
+        let mut storage = create_storage_engine(config).expect("Failed to create storage engine");
+        
+        // Initialize storage
+        storage.init().await.expect("Failed to initialize storage");
+        
         Self {
-            storage: Storage::new(data_dir),
+            storage,
             raft_node: None,
             in_transaction: false,
             transaction_buffer: Vec::new(),
@@ -41,7 +47,7 @@ impl Executor {
         self.raft_node = Some(node);
     }
     
-    pub fn execute(&mut self, ast: Ast) -> Result<QueryResult, ExecutorError> {
+    pub async fn execute(&mut self, ast: Ast) -> Result<QueryResult, ExecutorError> {
         // In a distributed setting, we should check if this is a read-only query
         // Read-only queries can be executed directly, but write queries should go through Raft
         let is_read_only = matches!(&ast, Ast::Statement(Statement::Select { .. }));
@@ -49,16 +55,19 @@ impl Executor {
         if is_read_only {
             // Read-only queries can be executed directly
             match ast {
-                Ast::Statement(stmt) => self.execute_statement(stmt),
+                Ast::Statement(stmt) => self.execute_statement(stmt).await,
             }
         } else {
             // Write queries should go through Raft
             if let Some(node_weak) = &self.raft_node {
                 if let Some(node) = node_weak.upgrade() {
-                    let mut node = node.lock().unwrap();
+                    let is_leader = {
+                        let node = node.lock().await;
+                        node.is_leader()
+                    };
                     
                     // Check if this node is the leader
-                    if !node.is_leader() {
+                    if !is_leader {
                         return Err(ExecutorError::ExecutionError("Not the leader".to_string()));
                     }
                     
@@ -66,14 +75,17 @@ impl Executor {
                     let command = bincode::encode_to_vec(&ast, bincode::config::standard())
                         .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {e}")))?;
                     
-                    // Submit to Raft
-                    node.submit_command(command)
-                        .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {e}")))?;
+                    // Submit to Raft (release lock after this)
+                    {
+                        let mut node = node.lock().await;
+                        node.submit_command(command)
+                            .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {e}")))?;
+                    }
                     
                     // For now, we'll just execute the command directly
                     // In a real implementation, we would wait for the command to be committed
                     match ast {
-                        Ast::Statement(stmt) => self.execute_statement(stmt),
+                        Ast::Statement(stmt) => self.execute_statement(stmt).await,
                     }
                 } else {
                     // Raft node has been dropped
@@ -82,14 +94,14 @@ impl Executor {
             } else {
                 // No Raft node, execute directly (single-node mode)
                 match ast {
-                    Ast::Statement(stmt) => self.execute_statement(stmt),
+                    Ast::Statement(stmt) => self.execute_statement(stmt).await,
                 }
             }
         }
     }
     
     // This method is called by the Raft state machine when a command is committed
-    pub fn apply_command(&mut self, command: &[u8]) -> Result<(), ExecutorError> {
+    pub async fn apply_command(&mut self, command: &[u8]) -> Result<(), ExecutorError> {
         // Deserialize the command
         let (ast, _): (Ast, usize) = bincode::decode_from_slice(command, bincode::config::standard())
             .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {e}")))?;
@@ -97,13 +109,13 @@ impl Executor {
         // Execute the command
         match ast {
             Ast::Statement(stmt) => {
-                self.execute_statement(stmt)?;
+                self.execute_statement(stmt).await?;
                 Ok(())
             }
         }
     }
     
-        fn execute_statement(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
+        async fn execute_statement(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
         match stmt {
             Statement::Begin => {
                 if self.in_transaction {
@@ -129,7 +141,7 @@ impl Executor {
                 for buffered_stmt in stmts_to_execute {
                     // Note: This is a simplified commit. A real implementation would need a way to roll back
                     // partially applied changes if one of the statements fails.
-                    self.execute_immediate(buffered_stmt)?;
+                    self.execute_immediate(buffered_stmt).await?;
                 }
 
                 self.in_transaction = false;
@@ -160,17 +172,19 @@ impl Executor {
                     })
                 } else {
                     // If not in a transaction, execute immediately
-                    self.execute_immediate(stmt)
+                    self.execute_immediate(stmt).await
                 }
             }
         }
     }
 
     /// Executes a statement directly against the storage engine, bypassing transaction logic.
-    fn execute_immediate(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
+    async fn execute_immediate(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
         match stmt {
             Statement::CreateTable { table_name, columns } => {
-                self.storage.create_table(&table_name, &columns)
+                let schema = self.convert_to_table_schema(&table_name, &columns);
+                
+                self.storage.create_table(&table_name, schema).await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
                 
                 Ok(QueryResult {
@@ -179,7 +193,9 @@ impl Executor {
                 })
             },
             Statement::Insert { table_name, columns, values } => {
-                self.storage.insert(&table_name, columns.as_deref(), &values)
+                let row = self.convert_to_row(&table_name, columns.as_deref(), &values).await?;
+                
+                self.storage.insert(&table_name, vec![row]).await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
                 
                 Ok(QueryResult {
@@ -188,13 +204,35 @@ impl Executor {
                 })
             },
             Statement::Select { table_name, columns, conditions } => {
-                let result = self.storage.select(&table_name, &columns, &conditions)
+                let filter = self.convert_to_filter(conditions.as_ref());
+                
+                let rows = self.storage.query(&table_name, filter).await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
                 
-                Ok(result)
+                self.convert_rows_to_query_result(&columns, rows)
             },
             Statement::Update { table_name, assignments, conditions } => {
-                self.storage.update(&table_name, &assignments, &conditions)
+                // Simplified: fetch, modify, delete old, insert new
+                let filter = self.convert_to_filter(conditions.as_ref());
+                
+                let mut rows = self.storage.query(&table_name, filter.clone()).await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+                
+                // Apply assignments
+                for row in &mut rows {
+                    for assignment in &assignments {
+                        row.values.insert(assignment.column_name.clone(), assignment.value.clone());
+                    }
+                }
+                
+                // Delete old rows if filter exists
+                if let Some(f) = filter {
+                    self.storage.delete(&table_name, f).await
+                        .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+                }
+                
+                // Insert updated rows
+                self.storage.insert(&table_name, rows).await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
 
                 Ok(QueryResult {
@@ -203,28 +241,109 @@ impl Executor {
                 })
             },
             Statement::Delete { table_name, conditions } => {
-                self.storage.delete(&table_name, &conditions)
+                let filter = self.convert_to_filter(conditions.as_ref())
+                    .ok_or_else(|| ExecutorError::ExecutionError("DELETE requires WHERE clause".to_string()))?;
+                
+                let deleted = self.storage.delete(&table_name, filter).await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Deleted rows from {table_name}"))]],
+                    rows: vec![vec![Value::String(format!("Deleted {deleted} rows from {table_name}"))]],
                 })
             },
-            Statement::CreateIndex { index_name, table_name, column_name } => {
-                self.storage.create_index(&index_name, &table_name, &column_name)
+            Statement::CreateIndex { index_name: _, table_name, column_name } => {
+                self.storage.create_index(&table_name, &column_name).await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Index {index_name} created on table {table_name}"))]],
+                    rows: vec![vec![Value::String(format!("Index created on {table_name}.{column_name}"))]],
                 })
             },
 
             // Transaction statements should not reach here
-                        Statement::Begin | Statement::Commit | Statement::Rollback => {
+            Statement::Begin | Statement::Commit | Statement::Rollback => {
                 Err(ExecutorError::ExecutionError("Cannot execute transaction control statements directly".to_string()))
             }
         }
+    }
+    
+    // Helper conversion methods
+    fn convert_to_table_schema(&self, table_name: &str, columns: &[ColumnDefinition]) -> TableSchema {
+        TableSchema {
+            name: table_name.to_string(),
+            columns: columns.iter().map(|col| Column {
+                name: col.name.clone(),
+                data_type: match col.data_type {
+                    ParserDataType::Int => DataType::Int,
+                    ParserDataType::Text | ParserDataType::String => DataType::String,
+                    ParserDataType::Float => DataType::Float,
+                    ParserDataType::Boolean => DataType::Boolean,
+                },
+            }).collect(),
+        }
+    }
+    
+    async fn convert_to_row(&self, table_name: &str, columns: Option<&[String]>, values: &[Value]) -> Result<Row, ExecutorError> {
+        let schema = self.storage.get_schema(table_name).await
+            .map_err(|e| ExecutorError::StorageError(e.to_string()))?
+            .ok_or_else(|| ExecutorError::ExecutionError(format!("Table {table_name} not found")))?;
+        
+        let mut row = Row::new();
+        
+        if let Some(cols) = columns {
+            for (i, col_name) in cols.iter().enumerate() {
+                if i < values.len() {
+                    row.insert(col_name.clone(), values[i].clone());
+                }
+            }
+        } else {
+            for (i, col) in schema.columns.iter().enumerate() {
+                if i < values.len() {
+                    row.insert(col.name.clone(), values[i].clone());
+                }
+            }
+        }
+        
+        Ok(row)
+    }
+    
+    fn convert_to_filter(&self, conditions: Option<&Vec<Condition>>) -> Option<Filter> {
+        conditions?.first().map(|cond| Filter {
+            column: cond.column_name.clone(),
+            op: match cond.operator {
+                Operator::Equals => FilterOp::Eq,
+                Operator::NotEquals => FilterOp::Ne,
+                Operator::LessThan => FilterOp::Lt,
+                Operator::LessThanOrEqual => FilterOp::Le,
+                Operator::GreaterThan => FilterOp::Gt,
+                Operator::GreaterThanOrEqual => FilterOp::Ge,
+            },
+            value: cond.value.clone(),
+        })
+    }
+    
+    fn convert_rows_to_query_result(&self, columns: &[String], rows: Vec<Row>) -> Result<QueryResult, ExecutorError> {
+        let col_names = if columns.contains(&"*".to_string()) || columns.is_empty() {
+            if let Some(first_row) = rows.first() {
+                first_row.values.keys().cloned().collect()
+            } else {
+                vec![]
+            }
+        } else {
+            columns.to_vec()
+        };
+        
+        let result_rows: Vec<Vec<Value>> = rows.iter().map(|row| {
+            col_names.iter().filter_map(|col| {
+                row.get(col).cloned()
+            }).collect()
+        }).collect();
+        
+        Ok(QueryResult {
+            columns: col_names,
+            rows: result_rows,
+        })
     }
 }

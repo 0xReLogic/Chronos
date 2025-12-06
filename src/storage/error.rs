@@ -2,27 +2,30 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
+    #[error("Table '{0}' not found")]
+    TableNotFound(String),
+    
+    #[error("Table '{0}' already exists")]
+    TableAlreadyExists(String),
+    
+    #[error("Column '{0}' not found in table '{1}'")]
+    ColumnNotFound(String, String),
+    
+    #[error("Schema mismatch: {0}")]
+    SchemaMismatch(String),
+    
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+    
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
     
-    #[error("CSV error: {0}")]
-    CsvError(#[from] csv::Error),
+    #[error("Sled error: {0}")]
+    SledError(String),
     
-    #[error("Table not found: {0}")]
-    TableNotFound(String),
+    #[error("Invalid filter operation")]
+    InvalidFilter,
     
-    #[error("Column not found: {0}")]
-    ColumnNotFound(String),
-    
-    #[error("Schema error: {0}")]
-    SchemaError(String),
-    
-    #[error("Value error: {0}")]
-    ValueError(String),
-
-    #[error("Index already exists: {0}")]
-    IndexExists(String),
-
-    #[error("Index error: {0}")]
-    IndexError(String),
+    #[error("Transaction error: {0}")]
+    TransactionError(String),
 }

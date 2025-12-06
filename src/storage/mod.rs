@@ -1,50 +1,189 @@
-mod error;
-mod csv_storage;
+pub mod csv_engine;
+pub mod sled_engine;
+pub mod error;
 
-use std::path::Path;
-use crate::parser::ast::{Assignment, ColumnDefinition, Value, Condition};
-use crate::executor::QueryResult;
+pub use csv_engine::CsvEngine;
+pub use sled_engine::SledEngine;
+pub use error::StorageError;
 
-pub use self::error::StorageError;
-use self::csv_storage::CsvStorage;
+use crate::parser::Value;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-pub struct Storage {
-    inner: CsvStorage,
+/// Storage engine abstraction for pluggable backends
+#[async_trait::async_trait]
+pub trait StorageEngine: Send + Sync {
+    /// Initialize storage (create dirs, open connections, etc)
+    async fn init(&mut self) -> Result<()>;
+    
+    /// Create a new table with schema
+    async fn create_table(&mut self, table_name: &str, schema: TableSchema) -> Result<()>;
+    
+    /// Insert rows into table
+    async fn insert(&mut self, table_name: &str, rows: Vec<Row>) -> Result<()>;
+    
+    /// Query rows with optional filter
+    async fn query(&self, table_name: &str, filter: Option<Filter>) -> Result<Vec<Row>>;
+    
+    /// Delete rows matching filter
+    async fn delete(&mut self, table_name: &str, filter: Filter) -> Result<usize>;
+    
+    /// Create index on column
+    async fn create_index(&mut self, table_name: &str, column: &str) -> Result<()>;
+    
+    /// Get table metadata
+    async fn get_schema(&self, table_name: &str) -> Result<Option<TableSchema>>;
+    
+    /// List all tables
+    async fn list_tables(&self) -> Result<Vec<String>>;
+    
+    /// Checkpoint/flush to disk
+    async fn checkpoint(&mut self) -> Result<()>;
+    
+    /// Close storage gracefully
+    async fn close(&mut self) -> Result<()>;
 }
 
-impl Storage {
-    pub fn new(data_dir: &str) -> Self {
-        let path = Path::new(data_dir);
-        if !path.exists() {
-            std::fs::create_dir_all(path).expect("Failed to create data directory");
-        }
-        
+/// Table schema definition
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+pub struct TableSchema {
+    pub name: String,
+    pub columns: Vec<Column>,
+}
+
+/// Column definition
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+pub struct Column {
+    pub name: String,
+    pub data_type: DataType,
+}
+
+/// Supported data types
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
+pub enum DataType {
+    Int,
+    Float,
+    String,
+    Boolean,
+    Timestamp,
+}
+
+/// Row representation
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+pub struct Row {
+    pub values: HashMap<String, Value>,
+}
+
+impl Row {
+    pub fn new() -> Self {
         Self {
-            inner: CsvStorage::new(data_dir),
+            values: HashMap::new(),
         }
     }
     
-    pub fn create_table(&mut self, table_name: &str, columns: &[ColumnDefinition]) -> Result<(), StorageError> {
-        self.inner.create_table(table_name, columns)
+    pub fn insert(&mut self, column: String, value: Value) {
+        self.values.insert(column, value);
     }
     
-    pub fn insert(&mut self, table_name: &str, columns: Option<&[String]>, values: &[Value]) -> Result<(), StorageError> {
-        self.inner.insert(table_name, columns, values)
+    pub fn get(&self, column: &str) -> Option<&Value> {
+        self.values.get(column)
+    }
+}
+
+/// Query filter for WHERE clauses
+#[derive(Debug, Clone)]
+pub struct Filter {
+    pub column: String,
+    pub op: FilterOp,
+    pub value: Value,
+}
+
+/// Filter operations
+#[derive(Debug, Clone)]
+pub enum FilterOp {
+    Eq,
+    Ne,
+    NotEq,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Lte,
+    Gte,
+    Between(Value),
+    Like,
+}
+
+impl Filter {
+    pub fn matches(&self, row: &Row) -> bool {
+        let row_value = match row.get(&self.column) {
+            Some(v) => v,
+            None => return false,
+        };
+        
+        match &self.op {
+            FilterOp::Eq => row_value == &self.value,
+            FilterOp::Ne | FilterOp::NotEq => row_value != &self.value,
+            FilterOp::Lt => self.compare_lt(row_value, &self.value),
+            FilterOp::Le | FilterOp::Lte => !self.compare_gt(row_value, &self.value),
+            FilterOp::Gt => self.compare_gt(row_value, &self.value),
+            FilterOp::Ge | FilterOp::Gte => !self.compare_lt(row_value, &self.value),
+            FilterOp::Like => self.matches_like(row_value, &self.value),
+            FilterOp::Between(high) => {
+                !self.compare_lt(row_value, &self.value) && 
+                !self.compare_gt(row_value, high)
+            }
+        }
     }
     
-    pub fn select(&self, table_name: &str, columns: &[String], conditions: &Option<Vec<Condition>>) -> Result<QueryResult, StorageError> {
-        self.inner.select(table_name, columns, conditions)
+    fn compare_lt(&self, a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Integer(av), Value::Integer(bv)) => av < bv,
+            (Value::Float(av), Value::Float(bv)) => av < bv,
+            (Value::String(av), Value::String(bv)) => av < bv,
+            _ => false,
+        }
     }
-
-    pub fn update(&self, table_name: &str, assignments: &[Assignment], conditions: &Option<Vec<Condition>>) -> Result<(), StorageError> {
-        self.inner.update(table_name, assignments, conditions)
+    
+    fn compare_gt(&self, a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Integer(av), Value::Integer(bv)) => av > bv,
+            (Value::Float(av), Value::Float(bv)) => av > bv,
+            (Value::String(av), Value::String(bv)) => av > bv,
+            _ => false,
+        }
     }
-
-    pub fn delete(&self, table_name: &str, conditions: &Option<Vec<Condition>>) -> Result<(), StorageError> {
-        self.inner.delete(table_name, conditions)
+    
+    fn matches_like(&self, row_value: &Value, pattern: &Value) -> bool {
+        match (row_value, pattern) {
+            (Value::String(s), Value::String(p)) => {
+                // Simple LIKE implementation (% = wildcard)
+                let pattern = p.replace('%', ".*");
+                regex::Regex::new(&pattern)
+                    .map(|re| re.is_match(s))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
     }
+}
 
-    pub fn create_index(&mut self, index_name: &str, table_name: &str, column_name: &str) -> Result<(), StorageError> {
-        self.inner.create_index(index_name, table_name, column_name)
+/// Storage configuration
+#[derive(Debug, Clone)]
+pub enum StorageConfig {
+    Csv { data_dir: String },
+    Sled { data_dir: String },
+}
+
+/// Factory for creating storage engines
+pub fn create_storage_engine(config: StorageConfig) -> Result<Box<dyn StorageEngine>> {
+    match config {
+        StorageConfig::Csv { data_dir } => {
+            Ok(Box::new(csv_engine::CsvEngine::new(&data_dir)?))
+        }
+        StorageConfig::Sled { data_dir } => {
+            Ok(Box::new(sled_engine::SledEngine::new(&data_dir)?))
+        }
     }
 }

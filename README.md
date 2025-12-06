@@ -44,10 +44,10 @@ graph TD
 ## Key Features
 
 - **Distributed Consensus with Raft:** Guarantees data consistency and availability through a robust, from-scratch implementation of the Raft algorithm.
-- **SQL Interface:** Interact with your distributed data using familiar SQL commands (`CREATE TABLE`, `INSERT`, `SELECT`).
+- **SQL Interface:** Interact with your distributed data using familiar SQL commands (`CREATE TABLE`, `INSERT`, `SELECT`, `UPDATE`, `DELETE`).
 - **Fault Tolerance:** The cluster can survive the failure of minority nodes and continue operating, with a new leader elected automatically.
-- **Persistent Storage:** Data is persisted to disk using a simple CSV-based storage engine, ensuring durability.
-- **Dynamic Indexing:** Supports `CREATE INDEX` and automatically maintains indexes on `INSERT` operations for faster lookups.
+- **Persistent Storage:** Data is persisted to disk using Sled embedded database, ensuring durability and fast performance.
+- **Async I/O:** Fully asynchronous storage operations with Tokio runtime for efficient concurrent access.
 - **Built in Rust:** Leverages Rust's performance, safety, and concurrency features to build a reliable system.
 
 ---
@@ -134,16 +134,19 @@ COMMIT;
 
 Chronos is a learning project and is not intended for production use. It currently implements:
 
-- Basic SQL parsing and execution
-- Simple CSV-based storage
+- SQL parsing with Pest and execution (CREATE, INSERT, SELECT, UPDATE, DELETE, CREATE INDEX)
+- Sled embedded database for persistent storage with async I/O
 - Raft consensus algorithm for leader election and log replication
-- gRPC-based networking for node communication
+- gRPC-based networking for node communication with Protocol Buffers
+- Async/await architecture with Tokio runtime
 
 Future work may include:
 
-- More comprehensive SQL support (JOINs, aggregations)
+- More comprehensive SQL support (JOINs, aggregations, subqueries)
+- Offline-first mode with conflict resolution for edge/IoT deployments
+- Time-series optimizations for sensor data
+- Binary size reduction for resource-constrained devices
 - More robust error handling and recovery
-- Performance optimizations
 
 ## License
 

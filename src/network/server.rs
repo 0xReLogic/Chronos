@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
 use log::{info, error, debug};
 
@@ -30,7 +31,7 @@ impl RaftService for RaftServer {
         let req = request.into_inner();
         debug!("Received RequestVote: {:?}", req);
         
-        let mut node = self.node.lock().unwrap();
+        let mut node = self.node.lock().await;
         
         // Convert to internal message format
         let message = RaftMessage::RequestVote {
@@ -70,7 +71,7 @@ impl RaftService for RaftServer {
         debug!("Received AppendEntries: term={}, leader={}, entries={}", 
                req.term, req.leader_id, req.entries.len());
         
-        let mut node = self.node.lock().unwrap();
+        let mut node = self.node.lock().await;
         
         // Convert entries to internal format
         let entries = req.entries.into_iter()
@@ -151,7 +152,7 @@ impl SqlService for SqlServer {
         
         // Check if this node is the leader
         let is_leader = {
-            let node = self.node.lock().unwrap();
+            let node = self.node.lock().await;
             node.is_leader()
         };
         
@@ -169,18 +170,18 @@ impl SqlService for SqlServer {
             .map_err(|e| Status::internal(format!("Serialization error: {e}")))?;
         
         {
-            let mut node = self.node.lock().unwrap();
+            let mut node = self.node.lock().await;
             node.submit_command(command)
                 .map_err(|e| Status::internal(format!("Raft error: {e}")))?;
         }
         
         // For now, we'll just execute the command directly
         // In a real implementation, we would wait for the command to be committed
-        let result = {
-            let mut executor = self.executor.lock().unwrap();
-            executor.execute(ast)
-                .map_err(|e| Status::internal(format!("Execution error: {e}")))?
-        };
+        
+        // Use tokio Mutex for async-safe locking
+        let mut executor = self.executor.lock().await;
+        let result = executor.execute(ast).await
+            .map_err(|e| Status::internal(format!("Execution error: {e}")))?;
         
         // Convert the result to the response format
         let mut response = SqlResponse {
