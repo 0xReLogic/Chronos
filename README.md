@@ -132,16 +132,20 @@ COMMIT;
 
 ## Performance Benchmarks
 
-Tested on Ubuntu 24.04.3 LTS with Sled storage engine:
+Tested on Ubuntu 24.04.3 LTS with Sled storage engine (size-optimized build):
+
+**Binary Size:**
+- Optimized release build: **3.7MB** (down from 12MB)
+- Suitable for edge devices and embedded systems
 
 **Insert Performance:**
-- 100 rows: ~1.9ms (median)
-- 1,000 rows: ~6.5ms (median)
-- **Throughput: 154,000 rows/second** (batch inserts)
+- 100 rows: ~2.2ms (median)
+- 1,000 rows: ~7.9ms (median)
+- **Throughput: 126,000 rows/second** (batch inserts)
 
 **Query Performance (Full Scan):**
-- 100 rows: ~2.1ms
-- 1,000 rows: ~7.4ms
+- 100 rows: ~2.2ms
+- 1,000 rows: ~9.4ms
 - Linear scaling with low variance
 
 Run benchmarks yourself:
@@ -169,7 +173,7 @@ Chronos is a learning project and is not intended for production use. It current
 Target: Transform Chronos into production-ready edge database for IoT deployments.
 
 **Priority 1 - Critical (Next 1-2 hours):**
-- [ ] Binary size optimization: 12MB → <5MB (opt-level=z, LTO, strip symbols)
+- [x] Binary size optimization: 12MB → 3.7MB (opt-level=z, LTO, strip symbols) 
 - [ ] Integration tests for distributed scenarios
 - [ ] Node restart persistence validation
 

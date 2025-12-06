@@ -44,6 +44,14 @@ regex = "1.10"
 [build-dependencies]
 tonic-build = { version = "0.10", features = ["prost"] }
 
+# Binary size optimization for edge deployment
+[profile.release]
+opt-level = "z"          # Optimize for size instead of speed
+lto = true               # Link-time optimization for smaller binary
+codegen-units = 1        # Better optimization, slower compile
+strip = true             # Strip symbols from binary
+panic = "abort"          # Don't include unwinding code
+
 [[bench]]
 name = "storage_bench"
 harness = false
