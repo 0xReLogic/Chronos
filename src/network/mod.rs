@@ -32,6 +32,12 @@ impl std::error::Error for NetworkError {}
 
 pub mod client;
 pub mod server;
+pub mod connectivity;
+pub mod offline_queue;
+
+pub use connectivity::*;
+pub use offline_queue::*;
+pub use server::HealthServer;
 
 pub mod proto {
     tonic::include_proto!("raft");

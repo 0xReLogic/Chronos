@@ -76,3 +76,14 @@ message Value {
     bool null_value = 5;
   }
 }
+
+// Health service for connectivity status
+service HealthService {
+  rpc GetConnectivity(HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string state = 1; // "Connected", "Disconnected", or "Reconnecting"
+}

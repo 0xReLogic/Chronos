@@ -1,7 +1,10 @@
-// New sled-based storage engine implementation
-
 use super::{
-    error::StorageError, Filter, Row, StorageEngine, TableSchema,
+    error::StorageError,
+    wal::{WalEntry, Operation},
+    Filter,
+    Row,
+    StorageEngine,
+    TableSchema,
 };
 use anyhow::Result;
 use std::path::PathBuf;
@@ -12,6 +15,7 @@ const SCHEMA_TREE: &str = "__schemas__";
 pub struct SledEngine {
     db: sled::Db,
     path: PathBuf,
+    wal_sequence: u64,
 }
 
 impl SledEngine {
@@ -24,7 +28,7 @@ impl SledEngine {
         
         log::info!("Sled storage engine initialized at {:?}", path);
         
-        Ok(Self { db, path })
+        Ok(Self { db, path, wal_sequence: 0 })
     }
     
     fn table_tree(&self, table_name: &str) -> Result<sled::Tree> {
@@ -36,6 +40,12 @@ impl SledEngine {
     fn schema_tree(&self) -> Result<sled::Tree> {
         self.db
             .open_tree(SCHEMA_TREE)
+            .map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+
+    fn wal_tree(&self) -> Result<sled::Tree> {
+        self.db
+            .open_tree("__wal__")
             .map_err(|e| StorageError::SledError(e.to_string()).into())
     }
     
@@ -60,6 +70,7 @@ impl SledEngine {
 #[async_trait::async_trait]
 impl StorageEngine for SledEngine {
     async fn init(&mut self) -> Result<()> {
+        self.recover_from_wal().await?;
         Ok(())
     }
     
@@ -82,6 +93,7 @@ impl StorageEngine for SledEngine {
     
     async fn insert(&mut self, table_name: &str, rows: Vec<Row>) -> Result<()> {
         let tree = self.table_tree(table_name)?;
+        let wal_tree = self.wal_tree()?;
         
         let schema = self.get_schema(table_name).await?
             .ok_or_else(|| StorageError::TableNotFound(table_name.to_string()))?;
@@ -99,9 +111,27 @@ impl StorageEngine for SledEngine {
             
             let key = self.generate_row_key();
             let value = bincode::encode_to_vec(&row, bincode::config::standard())?;
+
+            self.wal_sequence = self.wal_sequence.wrapping_add(1);
+            let op = Operation::Insert {
+                table: table_name.to_string(),
+                key: key.as_bytes().to_vec(),
+                value: value.clone(),
+            };
+            let ts = crate::common::timestamp::HybridTimestamp {
+                ts: uhlc::HLC::default().new_timestamp(),
+                node_id: 0,
+            };
+            let entry = WalEntry::new(self.wal_sequence, ts, op, 0);
+            let wal_bytes = bincode::serde::encode_to_vec(&entry, bincode::config::standard())?;
+            wal_tree.insert(self.wal_sequence.to_be_bytes(), wal_bytes)
+                .map_err(|e| StorageError::SledError(e.to_string()))?;
+
             tree.insert(key.as_bytes(), value)?;
         }
         
+        wal_tree.flush_async().await
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
         tree.flush_async().await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
         
@@ -222,6 +252,47 @@ impl StorageEngine for SledEngine {
             .map_err(|e| StorageError::SledError(e.to_string()))?;
         
         log::info!("Sled storage engine closed");
+        Ok(())
+    }
+}
+
+impl SledEngine {
+    async fn recover_from_wal(&mut self) -> Result<()> {
+        let wal_tree = self.wal_tree()?;
+
+        for item in wal_tree.iter() {
+            let (_key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            let (entry, _): (WalEntry, usize) =
+                bincode::serde::decode_from_slice(&value, bincode::config::standard())?;
+
+            match entry.operation {
+                Operation::Insert { table, key, value } => {
+                    let table_tree = self.table_tree(&table)?;
+                    table_tree
+                        .insert(key, value)
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                }
+                Operation::Update { table, key, value } => {
+                    let table_tree = self.table_tree(&table)?;
+                    table_tree
+                        .insert(key, value)
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                }
+                Operation::Delete { table, key } => {
+                    let table_tree = self.table_tree(&table)?;
+                    table_tree
+                        .remove(key)
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                }
+            }
+        }
+
+        self.db
+            .flush_async()
+            .await
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+        log::debug!("WAL recovery completed");
         Ok(())
     }
 }

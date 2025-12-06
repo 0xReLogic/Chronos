@@ -1,6 +1,7 @@
 pub mod csv_engine;
 pub mod sled_engine;
 pub mod error;
+pub mod wal;
 
 pub use csv_engine::CsvEngine;
 pub use sled_engine::SledEngine;

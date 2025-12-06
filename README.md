@@ -76,19 +76,31 @@ cargo build --release
 
 Open three separate terminals.
 
-**Terminal 1 (Node 1 - Leader):**
+**Terminal 1 (Node 1):**
 ```bash
-cargo run --release -- server --id 1 --port 8080 --raft-port 9090 --peers 2:localhost:9091 3:localhost:9092
+cargo run --release -- Node \
+  --id node1 \
+  --data-dir data \
+  --address 127.0.0.1:8000 \
+  --peers node2=127.0.0.1:8001,node3=127.0.0.1:8002
 ```
 
-**Terminal 2 (Node 2 - Follower):**
+**Terminal 2 (Node 2):**
 ```bash
-cargo run --release -- server --id 2 --port 8081 --raft-port 9091 --peers 1:localhost:9090 3:localhost:9092
+cargo run --release -- Node \
+  --id node2 \
+  --data-dir data \
+  --address 127.0.0.1:8001 \
+  --peers node1=127.0.0.1:8000,node3=127.0.0.1:8002
 ```
 
-**Terminal 3 (Node 3 - Follower):**
+**Terminal 3 (Node 3):**
 ```bash
-cargo run --release -- server --id 3 --port 8082 --raft-port 9092 --peers 1:localhost:9090 2:localhost:9091
+cargo run --release -- Node \
+  --id node3 \
+  --data-dir data \
+  --address 127.0.0.1:8002 \
+  --peers node1=127.0.0.1:8000,node2=127.0.0.1:8001
 ```
 
 ### 4. Connect with the Client
@@ -96,7 +108,7 @@ cargo run --release -- server --id 3 --port 8082 --raft-port 9092 --peers 1:loca
 Open a fourth terminal.
 
 ```bash
-cargo run --release -- client --port 8080
+cargo run --release -- Client --leader 127.0.0.1:8000
 ```
 
 ### 5. Execute SQL
@@ -135,17 +147,17 @@ COMMIT;
 Tested on Ubuntu 24.04.3 LTS with Sled storage engine (size-optimized build):
 
 **Binary Size:**
-- Optimized release build: **3.7MB** (down from 12MB)
+- Optimized release build: **3.7MB** 
 - Suitable for edge devices and embedded systems
 
 **Insert Performance:**
-- 100 rows: ~2.2ms (median)
-- 1,000 rows: ~7.9ms (median)
-- **Throughput: 126,000 rows/second** (batch inserts)
+- 100 rows: ~10.5ms (median)
+- 1,000 rows: ~23.6ms (median)
+- Approx throughput (with WAL + HLC): ~40,000 rows/second (batch inserts of 1,000 rows)
 
 **Query Performance (Full Scan):**
-- 100 rows: ~2.2ms
-- 1,000 rows: ~9.4ms
+- 100 rows: ~9.8ms
+- 1,000 rows: ~25.0ms
 - Linear scaling with low variance
 
 Run benchmarks yourself:
@@ -170,66 +182,14 @@ Chronos is a learning project and is not intended for production use. It current
 
 ## Edge/IoT Roadmap
 
-Target: Transform Chronos into production-ready edge database for IoT deployments.
+Current focus:
 
-**Priority 1 - Critical (Next 1-2 hours):**
-- [x] Binary size optimization: 12MB → 3.7MB (opt-level=z, LTO, strip symbols) 
-- [ ] Integration tests for distributed scenarios
-- [ ] Node restart persistence validation
-
-**Priority 2 - High Impact (Next 1-2 days):**
-- [ ] Time-series storage optimization
-  - Columnar storage per device_id
-  - Timestamp-based partitioning (hourly/daily buckets)
-  - Downsampling strategy (raw → 1min avg → 1hr avg)
-  - TTL for auto-cleanup with configurable retention
-  - Expected: 10x storage reduction, 5x faster queries
-  
-- [ ] Offline-first mode
-  - Local write buffer when leader unreachable
-  - Ring buffer + WAL for durability
-  - Auto-sync on reconnection with batching
-  - Vector clocks for conflict detection
-  - Expected: 99.9% write availability even with network issues
-
-**Priority 3 - Medium Term (Next week):**
-- [ ] Network optimization for unreliable connections
-  - Message batching (aggregate multiple writes)
-  - Payload compression (zstd/lz4)
-  - Adaptive Raft config (tune heartbeat based on network quality)
-  - Expected: 50% bandwidth reduction
-  
-- [ ] Monitoring & observability
-  - Metrics: write_latency, query_latency, storage_size, memory_usage
-  - Health checks: /health endpoint
-  - Alerts: disk_full, high_latency, leader_election_failed
-
-**Long-term (Future):**
-- [ ] More comprehensive SQL support (JOINs, aggregations, subqueries)
-- [ ] CRDT-based conflict resolution
-- [ ] Edge-to-cloud sync protocol
-- [ ] Security (at-rest encryption, mTLS)
-- [ ] OTA update mechanism
-
-## Technical Notes
-
-**Storage Engine Migration (Dec 2025):**
-- Migrated from CSV to Sled embedded database
-- Full async/await refactor with Tokio runtime
-- Changed std::sync::Mutex → tokio::sync::Mutex throughout
-- Bincode v2.0 for efficient serialization
-
-**Key Architecture Decisions:**
-- Sled over RocksDB: Pure Rust, smaller binary footprint (~100KB vs multi-MB)
-- Async-native: Prevents blocking, prepares for high-concurrency workloads
-- Trait abstraction: Easy to swap storage backends (RocksDB, custom LSM tree)
-
-**Known Limitations:**
-- Binary size 12MB (optimization pending)
-- No time-series specific optimizations yet
-- Raft heartbeat 50ms (aggressive for IoT networks)
-- No snapshot/log compaction mechanism
-- Single-threaded executor (no parallel queries)
+- Phase 0: Foundation (completed).
+- Phase 1: Offline-First Mode (in progress):
+  - Hybrid Logical Clock (HLC) timestamps for write operations.
+  - Write-ahead log (WAL) on Sled with recovery on startup.
+  - Connectivity detection and a gRPC health service per node.
+  - Offline write queue core structures (integration and persistence are next).
 
 ## License
 

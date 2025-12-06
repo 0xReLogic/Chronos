@@ -156,15 +156,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _node = Arc::clone(&raft.node);
             raft.start().await?;
             
+            // Connectivity monitor for this node's SQL endpoint
+            let monitor = chronos::network::ConnectivityMonitor::new(&address, std::time::Duration::from_secs(3));
+            let connectivity_state = monitor.state();
+            tokio::spawn(monitor.run());
+
             // Start gRPC server
             let addr = address.parse()?;
             let raft_server = chronos::network::RaftServer::new(Arc::clone(&raft.node));
             let sql_server = chronos::network::SqlServer::new(Arc::clone(&raft.node), Arc::clone(&executor));
+            let health_server = chronos::network::HealthServer::new(Arc::clone(&connectivity_state));
 
             info!("gRPC server listening on {addr}");
             tonic::transport::Server::builder()
                 .add_service(chronos::network::proto::raft_service_server::RaftServiceServer::new(raft_server))
                 .add_service(chronos::network::proto::sql_service_server::SqlServiceServer::new(sql_server))
+                .add_service(chronos::network::proto::health_service_server::HealthServiceServer::new(health_server))
                 .serve(addr)
                 .await?;
         },

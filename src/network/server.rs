@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
 use log::{info, error, debug};
 
@@ -8,8 +8,10 @@ use crate::executor::Executor;
 use crate::parser::Parser;
 use crate::network::proto::raft_service_server::RaftService;
 use crate::network::proto::sql_service_server::SqlService;
+use crate::network::proto::health_service_server::HealthService;
 
 use super::proto::*;
+use crate::network::ConnectivityState;
 
 
 pub struct RaftServer {
@@ -113,6 +115,32 @@ impl RaftService for RaftServer {
         }
         
         Ok(Response::new(response))
+    }
+}
+
+pub struct HealthServer {
+    state: Arc<RwLock<ConnectivityState>>,
+}
+
+impl HealthServer {
+    pub fn new(state: Arc<RwLock<ConnectivityState>>) -> Self {
+        Self { state }
+    }
+}
+
+#[tonic::async_trait]
+impl HealthService for HealthServer {
+    async fn get_connectivity(
+        &self,
+        _request: Request<HealthRequest>,
+    ) -> Result<Response<HealthResponse>, Status> {
+        let state = *self.state.read().await;
+        let state_str = match state {
+            ConnectivityState::Connected => "Connected",
+            ConnectivityState::Disconnected => "Disconnected",
+            ConnectivityState::Reconnecting => "Reconnecting",
+        };
+        Ok(Response::new(HealthResponse { state: state_str.to_string() }))
     }
 }
 

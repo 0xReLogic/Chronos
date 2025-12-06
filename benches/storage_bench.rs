@@ -64,7 +64,6 @@ fn generate_sensor_rows(count: usize) -> Vec<Row> {
 fn benchmark_insert(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("insert");
-    
     for size in [100, 1000] {
         group.bench_with_input(BenchmarkId::new("sled", size), &size, |b, &size| {
             b.to_async(&runtime).iter(|| async {

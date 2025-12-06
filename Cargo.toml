@@ -29,6 +29,7 @@ anyhow = "1.0"
 log = "0.4"
 env_logger = "0.10"
 bincode = { version = "2.0.1", features = ["serde"] }
+uhlc = "0.8.2"
 tokio = { version = "1.47.0", features = ["full"] }
 rand = "0.9.2"
 
