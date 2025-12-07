@@ -3,6 +3,7 @@ use super::{
     offline_queue::PersistentOfflineQueue,
     wal::{WalEntry, Operation},
     Filter,
+    FilterOp,
     Row,
     StorageEngine,
     TableSchema,
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 use tokio::sync::Mutex as TokioMutex;
 
 const SCHEMA_TREE: &str = "__schemas__";
+const INDEX_META_TREE: &str = "__indexes__";
 
 pub struct SledEngine {
     db: sled::Db,
@@ -55,6 +57,12 @@ impl SledEngine {
     fn index_tree(&self, table_name: &str, column: &str) -> Result<sled::Tree> {
         self.db
             .open_tree(format!("index:{}:{}", table_name, column))
+            .map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+
+    fn index_meta_tree(&self) -> Result<sled::Tree> {
+        self.db
+            .open_tree(INDEX_META_TREE)
             .map_err(|e| StorageError::SledError(e.to_string()).into())
     }
     
@@ -138,6 +146,30 @@ impl StorageEngine for SledEngine {
                 .map_err(|e| StorageError::SledError(e.to_string()))?;
 
             tree.insert(key.as_bytes(), value)?;
+
+            // Maintain secondary indexes for this table, if configured
+            let index_meta = self.index_meta_tree()?;
+            for col in &schema.columns {
+                let meta_key = format!("{}:{}", table_name, col.name);
+                let has_index = index_meta
+                    .contains_key(meta_key.as_bytes())
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+                if !has_index {
+                    continue;
+                }
+
+                if let Some(col_value) = row.get(&col.name) {
+                    let index_tree = self.index_tree(table_name, &col.name)?;
+                    let index_key = format!(
+                        "{}:{}",
+                        serde_json::to_string(col_value)?,
+                        &key
+                    );
+                    index_tree
+                        .insert(index_key.as_bytes(), key.as_bytes())
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                }
+            }
         }
         
         wal_tree.flush_async().await
@@ -153,22 +185,63 @@ impl StorageEngine for SledEngine {
     async fn query(&self, table_name: &str, filter: Option<Filter>) -> Result<Vec<Row>> {
         let tree = self.table_tree(table_name)?;
         let mut results = Vec::new();
-        
+
+        // Try to use a secondary index when we have a simple equality filter
+        if let Some(ref f) = filter {
+            if matches!(f.op, FilterOp::Eq) {
+                if let Ok(index_tree) = self.index_tree(table_name, &f.column) {
+                    let prefix = serde_json::to_string(&f.value)?;
+
+                    for item in index_tree.scan_prefix(prefix.as_bytes()) {
+                        let (_index_key, row_key) = item
+                            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+                        if let Some(value) = tree
+                            .get(&row_key)
+                            .map_err(|e| StorageError::SledError(e.to_string()))?
+                        {
+                            let (row, _): (Row, usize) =
+                                bincode::decode_from_slice(&value, bincode::config::standard())?;
+
+                            // Extra safety: still apply the filter in case of type mismatches
+                            if let Some(ref f) = filter {
+                                if !f.matches(&row) {
+                                    continue;
+                                }
+                            }
+
+                            results.push(row);
+                        }
+                    }
+
+                    log::debug!(
+                        "Query (indexed) returned {} rows from table '{}'",
+                        results.len(),
+                        table_name
+                    );
+
+                    return Ok(results);
+                }
+            }
+        }
+
+        // Fallback: full table scan
         for item in tree.iter() {
             let (_key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
-            let (row, _): (Row, usize) = bincode::decode_from_slice(&value, bincode::config::standard())?;
-            
+            let (row, _): (Row, usize) =
+                bincode::decode_from_slice(&value, bincode::config::standard())?;
+
             if let Some(ref f) = filter {
                 if !f.matches(&row) {
                     continue;
                 }
             }
-            
+
             results.push(row);
         }
-        
+
         log::debug!("Query returned {} rows from table '{}'", results.len(), table_name);
-        
+
         Ok(results)
     }
     
@@ -176,16 +249,53 @@ impl StorageEngine for SledEngine {
         let tree = self.table_tree(table_name)?;
         let mut deleted = 0;
         
+        // Discover which columns have indexes for this table (if any)
+        let schema = self.get_schema(table_name).await?
+            .ok_or_else(|| StorageError::TableNotFound(table_name.to_string()))?;
+        let index_meta = self.index_meta_tree()?;
+        let mut indexed_columns: Vec<String> = Vec::new();
+        for col in &schema.columns {
+            let meta_key = format!("{}:{}", table_name, col.name);
+            let has_index = index_meta
+                .contains_key(meta_key.as_bytes())
+                .map_err(|e| StorageError::SledError(e.to_string()))?;
+            if has_index {
+                indexed_columns.push(col.name.clone());
+            }
+        }
+
         let mut to_delete = Vec::new();
+        let mut rows_for_index: Vec<(sled::IVec, Row)> = Vec::new();
         for item in tree.iter() {
             let (key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
             let (row, _): (Row, usize) = bincode::decode_from_slice(&value, bincode::config::standard())?;
             
             if filter.matches(&row) {
-                to_delete.push(key);
+                to_delete.push(key.clone());
+                if !indexed_columns.is_empty() {
+                    rows_for_index.push((key, row));
+                }
             }
         }
-        
+
+        // Remove index entries for the rows being deleted
+        for (key, row) in &rows_for_index {
+            let key_str = String::from_utf8_lossy(key).to_string();
+            for col_name in &indexed_columns {
+                if let Some(col_value) = row.get(col_name) {
+                    let index_tree = self.index_tree(table_name, col_name)?;
+                    let index_key = format!(
+                        "{}:{}",
+                        serde_json::to_string(col_value)?,
+                        key_str
+                    );
+                    index_tree
+                        .remove(index_key.as_bytes())
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                }
+            }
+        }
+
         for key in to_delete {
             tree.remove(key)?;
             deleted += 1;
@@ -202,25 +312,37 @@ impl StorageEngine for SledEngine {
     async fn create_index(&mut self, table_name: &str, column: &str) -> Result<()> {
         let table_tree = self.table_tree(table_name)?;
         let index_tree = self.index_tree(table_name, column)?;
-        
+
+        // Build the initial index from existing rows
         for item in table_tree.iter() {
             let (row_key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
-            let (row, _): (Row, usize) = bincode::decode_from_slice(&value, bincode::config::standard())?;
-            
+            let (row, _): (Row, usize) =
+                bincode::decode_from_slice(&value, bincode::config::standard())?;
+
             if let Some(col_value) = row.get(column) {
-                let index_key = format!("{}:{}", 
+                let index_key = format!(
+                    "{}:{}",
                     serde_json::to_string(col_value)?,
                     String::from_utf8_lossy(&row_key)
                 );
                 index_tree.insert(index_key.as_bytes(), row_key)?;
             }
         }
-        
-        index_tree.flush_async().await
+
+        index_tree
+            .flush_async()
+            .await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
-        
+
+        // Register the index in metadata so future INSERT/DELETE keep it up to date
+        let index_meta = self.index_meta_tree()?;
+        let meta_key = format!("{}:{}", table_name, column);
+        index_meta
+            .insert(meta_key.as_bytes(), &[])
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
         log::info!("Created index on column '{}' for table '{}'", column, table_name);
-        
+
         Ok(())
     }
     
@@ -354,7 +476,7 @@ impl SledEngine {
 mod tests {
     use super::*;
     use crate::parser::Value;
-    use crate::storage::{Column, DataType, TableSchema};
+    use crate::storage::{Column, DataType, TableSchema, Filter, FilterOp};
     use tempfile::TempDir;
     
     #[tokio::test]
@@ -411,5 +533,124 @@ mod tests {
         
         let results = engine.query("sensors", None).await.unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sled_indexed_query() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap()).unwrap();
+
+        let schema = TableSchema {
+            name: "sensors".to_string(),
+            columns: vec![
+                Column {
+                    name: "sensor_id".to_string(),
+                    data_type: DataType::Int,
+                },
+                Column {
+                    name: "temperature".to_string(),
+                    data_type: DataType::Float,
+                },
+            ],
+        };
+
+        engine.create_table("sensors", schema).await.unwrap();
+
+        // Insert two rows with different sensor_ids
+        let mut row1 = Row::new();
+        row1.insert("sensor_id".to_string(), Value::Integer(1));
+        row1.insert("temperature".to_string(), Value::Float(25.5));
+
+        let mut row2 = Row::new();
+        row2.insert("sensor_id".to_string(), Value::Integer(2));
+        row2.insert("temperature".to_string(), Value::Float(30.0));
+
+        engine.insert("sensors", vec![row1, row2]).await.unwrap();
+
+        // Create an index on sensor_id
+        engine.create_index("sensors", "sensor_id").await.unwrap();
+
+        // Build a filter that should be able to use the index
+        let filter = Filter {
+            column: "sensor_id".to_string(),
+            op: FilterOp::Eq,
+            value: Value::Integer(1),
+        };
+
+        let results = engine.query("sensors", Some(filter)).await.unwrap();
+        assert_eq!(results.len(), 1);
+        let row = &results[0];
+        assert_eq!(row.get("sensor_id"), Some(&Value::Integer(1)));
+    }
+
+    #[tokio::test]
+    async fn test_sled_indexed_delete() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap()).unwrap();
+
+        let schema = TableSchema {
+            name: "sensors".to_string(),
+            columns: vec![
+                Column {
+                    name: "sensor_id".to_string(),
+                    data_type: DataType::Int,
+                },
+                Column {
+                    name: "temperature".to_string(),
+                    data_type: DataType::Float,
+                },
+            ],
+        };
+
+        engine.create_table("sensors", schema).await.unwrap();
+
+        // Insert three rows, two of which share the same sensor_id
+        let mut row1 = Row::new();
+        row1.insert("sensor_id".to_string(), Value::Integer(1));
+        row1.insert("temperature".to_string(), Value::Float(25.5));
+
+        let mut row2 = Row::new();
+        row2.insert("sensor_id".to_string(), Value::Integer(2));
+        row2.insert("temperature".to_string(), Value::Float(30.0));
+
+        let mut row3 = Row::new();
+        row3.insert("sensor_id".to_string(), Value::Integer(1));
+        row3.insert("temperature".to_string(), Value::Float(26.0));
+
+        engine.insert("sensors", vec![row1, row2, row3]).await.unwrap();
+
+        // Create an index on sensor_id
+        engine.create_index("sensors", "sensor_id").await.unwrap();
+
+        // Delete all rows with sensor_id = 1
+        let delete_filter = Filter {
+            column: "sensor_id".to_string(),
+            op: FilterOp::Eq,
+            value: Value::Integer(1),
+        };
+
+        let deleted = engine.delete("sensors", delete_filter).await.unwrap();
+        assert_eq!(deleted, 2);
+
+        // Query again by sensor_id = 1 using the index; should return no rows
+        let query_filter = Filter {
+            column: "sensor_id".to_string(),
+            op: FilterOp::Eq,
+            value: Value::Integer(1),
+        };
+
+        let results = engine.query("sensors", Some(query_filter)).await.unwrap();
+        assert_eq!(results.len(), 0);
+
+        // And sensor_id = 2 should still be present
+        let filter2 = Filter {
+            column: "sensor_id".to_string(),
+            op: FilterOp::Eq,
+            value: Value::Integer(2),
+        };
+        let results2 = engine.query("sensors", Some(filter2)).await.unwrap();
+        assert_eq!(results2.len(), 1);
+        let row = &results2[0];
+        assert_eq!(row.get("sensor_id"), Some(&Value::Integer(2)));
     }
 }
