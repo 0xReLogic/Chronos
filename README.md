@@ -183,22 +183,6 @@ Chronos is a learning project and is not intended for production use. It current
 - gRPC-based networking for node communication with Protocol Buffers
 - Async/await architecture with Tokio runtime
 
-## Edge/IoT Roadmap
-
-See `ROADMAP.md` for full details.
-
-Current status:
-
-- Phase 0: Foundation (completed).
-- Phase 1: Offline-First Mode (completed):
-  - Hybrid Logical Clock (HLC) timestamps for write operations.
-  - Write-ahead log (WAL) on Sled with recovery on startup.
-  - Connectivity detection and a gRPC health service per node.
-  - Offline queue support:
-    - In-memory queue in the distributed client REPL for network outages.
-    - Persistent backing queue in `storage::offline_queue` (Sled tree `__offline_queue__`) for future sync.
-- Phase 2: Sync Protocol (next): delta sync and conflict resolution built on top of these queues.
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE.md file for details.

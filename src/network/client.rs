@@ -7,7 +7,15 @@ use crate::raft::{RaftMessage, LogEntry};
 
 use crate::network::proto::raft_service_client::RaftServiceClient;
 use crate::network::proto::sql_service_client::SqlServiceClient;
-use crate::network::proto::{AppendEntriesRequest, RequestVoteRequest, SqlRequest};
+use crate::network::proto::sync_service_client::SyncServiceClient;
+use crate::network::proto::{
+    AppendEntriesRequest,
+    RequestVoteRequest,
+    SqlRequest,
+    SyncOperation,
+    SyncRequest,
+    SyncResponse,
+};
 
 use super::proto::*;
 use super::NetworkError;
@@ -158,5 +166,67 @@ impl SqlClient {
             .into_inner();
         
         Ok(response)
+    }
+}
+
+pub struct SyncClient {
+    address: String,
+    client: Option<SyncServiceClient<Channel>>,
+}
+
+impl SyncClient {
+    pub fn new(address: &str) -> Self {
+        Self {
+            address: address.to_string(),
+            client: None,
+        }
+    }
+
+    pub async fn connect(&mut self) -> Result<(), NetworkError> {
+        let endpoint = Endpoint::from_shared(self.address.clone())
+            .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+
+        let channel = endpoint
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(5))
+            .connect()
+            .await?;
+
+        self.client = Some(SyncServiceClient::new(channel));
+
+        Ok(())
+    }
+
+    pub async fn sync_operations(
+        &mut self,
+        operations: Vec<crate::storage::offline_queue::PersistentQueuedOperation>,
+    ) -> Result<u64, NetworkError> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let ops: Vec<SyncOperation> = operations
+            .into_iter()
+            .map(|op| {
+                let bytes = bincode::serde::encode_to_vec(&op, bincode::config::standard())
+                    .expect("failed to encode PersistentQueuedOperation for sync");
+                SyncOperation {
+                    id: op.id,
+                    data: bytes,
+                }
+            })
+            .collect();
+
+        let request = SyncRequest { operations: ops };
+
+        let response: SyncResponse = self
+            .client
+            .as_mut()
+            .ok_or_else(|| NetworkError::ConnectionError("Client not connected".to_string()))?
+            .sync(Request::new(request))
+            .await?
+            .into_inner();
+
+        Ok(response.applied)
     }
 }

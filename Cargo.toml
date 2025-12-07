@@ -2,7 +2,7 @@
 name = "chronos"
 version = "1.0.0"
 edition = "2021"
-description = "A SQL database built from scratch in Rust"
+description = "ChronosDB: Distributed SQL for Edge & IoT"
 authors = ["Allen Elzayn"]
 
 [dev-dependencies]

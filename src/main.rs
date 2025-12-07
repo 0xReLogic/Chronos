@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chronos::Executor;
+use chronos::network::SyncWorker;
 use env_logger::Env;
 use log::info;
 
@@ -48,6 +49,18 @@ enum Command {
         /// Clean the data directory before starting
         #[arg(long)]
         clean: bool,
+
+        /// Optional sync target URL (e.g. http://host:port) for edge nodes
+        #[arg(long)]
+        sync_target: Option<String>,
+
+        /// Interval in seconds between sync attempts
+        #[arg(long, default_value_t = 5)]
+        sync_interval_secs: u64,
+
+        /// Maximum number of operations per sync batch
+        #[arg(long, default_value_t = 100)]
+        sync_batch_size: usize,
     },
     
     /// Start the Chronos client REPL
@@ -105,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
-        Command::Node { id, data_dir, address, peers, clean } => {
+        Command::Node { id, data_dir, address, peers, clean, sync_target, sync_interval_secs, sync_batch_size } => {
             info!("Starting Chronos node {id} at {address}");
 
             let node_data_dir = format!("{data_dir}/{id}");
@@ -166,12 +179,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let raft_server = chronos::network::RaftServer::new(Arc::clone(&raft.node));
             let sql_server = chronos::network::SqlServer::new(Arc::clone(&raft.node), Arc::clone(&executor));
             let health_server = chronos::network::HealthServer::new(Arc::clone(&connectivity_state));
+            let sync_server = chronos::network::SyncServer::new(Arc::clone(&executor));
+
+            // If this node is configured as an edge node with a sync target,
+            // start a background SyncWorker that drains the persistent
+            // offline queue via the Executor and pushes operations to the
+            // target.
+            if let Some(target) = sync_target {
+                let worker = SyncWorker::new(
+                    Arc::clone(&executor),
+                    target,
+                    std::time::Duration::from_secs(sync_interval_secs),
+                    sync_batch_size,
+                );
+                tokio::spawn(worker.run());
+            }
 
             info!("gRPC server listening on {addr}");
             tonic::transport::Server::builder()
                 .add_service(chronos::network::proto::raft_service_server::RaftServiceServer::new(raft_server))
                 .add_service(chronos::network::proto::sql_service_server::SqlServiceServer::new(sql_server))
                 .add_service(chronos::network::proto::health_service_server::HealthServiceServer::new(health_server))
+                .add_service(chronos::network::proto::sync_service_server::SyncServiceServer::new(sync_server))
                 .serve(addr)
                 .await?;
         },

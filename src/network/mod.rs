@@ -34,14 +34,16 @@ pub mod client;
 pub mod server;
 pub mod connectivity;
 pub mod offline_queue;
+pub mod sync_worker;
 
 pub use connectivity::*;
 pub use offline_queue::*;
-pub use server::HealthServer;
+pub use server::{HealthServer, SyncServer};
+pub use sync_worker::SyncWorker;
 
 pub mod proto {
     tonic::include_proto!("raft");
 }
 
-pub use client::{RaftClient, SqlClient};
+pub use client::{RaftClient, SqlClient, SyncClient};
 pub use server::{RaftServer, SqlServer};

@@ -87,3 +87,23 @@ message HealthRequest {}
 message HealthResponse {
   string state = 1; // "Connected", "Disconnected", or "Reconnecting"
 }
+
+// Sync service for offline delta replication between edge nodes and a sync target
+service SyncService {
+  rpc Sync(SyncRequest) returns (SyncResponse);
+}
+
+// Single operation payload for sync. `data` typically contains a bincode-encoded
+// representation of an Operation + HybridTimestamp (PersistentQueuedOperation).
+message SyncOperation {
+  uint64 id = 1;
+  bytes data = 2;
+}
+
+message SyncRequest {
+  repeated SyncOperation operations = 1;
+}
+
+message SyncResponse {
+  uint64 applied = 1;
+}

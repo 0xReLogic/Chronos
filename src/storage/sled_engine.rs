@@ -1,5 +1,6 @@
 use super::{
     error::StorageError,
+    offline_queue::PersistentOfflineQueue,
     wal::{WalEntry, Operation},
     Filter,
     Row,
@@ -8,14 +9,14 @@ use super::{
 };
 use anyhow::Result;
 use std::path::PathBuf;
+use tokio::sync::Mutex as TokioMutex;
 
 const SCHEMA_TREE: &str = "__schemas__";
 
-#[allow(dead_code)]
 pub struct SledEngine {
     db: sled::Db,
-    path: PathBuf,
     wal_sequence: u64,
+    offline_queue: TokioMutex<PersistentOfflineQueue>,
 }
 
 impl SledEngine {
@@ -28,7 +29,9 @@ impl SledEngine {
         
         log::info!("Sled storage engine initialized at {:?}", path);
         
-        Ok(Self { db, path, wal_sequence: 0 })
+        let offline_queue = PersistentOfflineQueue::new(&db)?;
+        
+        Ok(Self { db, wal_sequence: 0, offline_queue: TokioMutex::new(offline_queue) })
     }
     
     fn table_tree(&self, table_name: &str) -> Result<sled::Tree> {
@@ -122,6 +125,13 @@ impl StorageEngine for SledEngine {
                 ts: uhlc::HLC::default().new_timestamp(),
                 node_id: 0,
             };
+
+            // Enqueue into persistent offline queue for Phase 2 sync.
+            {
+                let mut queue = self.offline_queue.lock().await;
+                let _ = queue.enqueue(ts, op.clone())?;
+            }
+
             let entry = WalEntry::new(self.wal_sequence, ts, op, 0);
             let wal_bytes = bincode::serde::encode_to_vec(&entry, bincode::config::standard())?;
             wal_tree.insert(self.wal_sequence.to_be_bytes(), wal_bytes)
@@ -252,6 +262,49 @@ impl StorageEngine for SledEngine {
             .map_err(|e| StorageError::SledError(e.to_string()))?;
         
         log::info!("Sled storage engine closed");
+        Ok(())
+    }
+
+    async fn drain_offline_queue(&self, limit: usize) -> Result<Vec<crate::storage::offline_queue::PersistentQueuedOperation>> {
+        let mut queue = self.offline_queue.lock().await;
+        queue.drain(limit).map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+
+    async fn requeue_offline_ops(&self, ops: Vec<crate::storage::offline_queue::PersistentQueuedOperation>) -> Result<()> {
+        let mut queue = self.offline_queue.lock().await;
+        for op in ops {
+            queue.enqueue(op.timestamp, op.operation)?;
+        }
+        Ok(())
+    }
+
+    async fn apply_operation(&mut self, op: Operation) -> Result<()> {
+        match op {
+            Operation::Insert { table, key, value } => {
+                let table_tree = self.table_tree(&table)?;
+                table_tree
+                    .insert(key, value)
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+            }
+            Operation::Update { table, key, value } => {
+                let table_tree = self.table_tree(&table)?;
+                table_tree
+                    .insert(key, value)
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+            }
+            Operation::Delete { table, key } => {
+                let table_tree = self.table_tree(&table)?;
+                table_tree
+                    .remove(key)
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+            }
+        }
+
+        self.db
+            .flush_async()
+            .await
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
         Ok(())
     }
 }

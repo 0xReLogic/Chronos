@@ -12,6 +12,8 @@ use crate::parser::Value;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::storage::offline_queue::PersistentQueuedOperation;
+use crate::storage::wal::Operation;
 
 /// Storage engine abstraction for pluggable backends
 #[async_trait::async_trait]
@@ -45,6 +47,26 @@ pub trait StorageEngine: Send + Sync {
     
     /// Close storage gracefully
     async fn close(&mut self) -> Result<()>;
+
+    /// Apply a low-level storage operation (used by sync replication).
+    /// Default implementation returns an error for engines that do not
+    /// support this.
+    async fn apply_operation(&mut self, _op: Operation) -> Result<()> {
+        Err(anyhow::anyhow!("apply_operation not supported for this storage engine"))
+    }
+
+    /// Drain at most `limit` operations from the offline queue. Default
+    /// implementation returns an empty vector for engines that do not
+    /// support offline queueing.
+    async fn drain_offline_queue(&self, _limit: usize) -> Result<Vec<PersistentQueuedOperation>> {
+        Ok(Vec::new())
+    }
+
+    /// Requeue operations back into the offline queue. Default implementation
+    /// is a no-op for engines without offline queue support.
+    async fn requeue_offline_ops(&self, _ops: Vec<PersistentQueuedOperation>) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Table schema definition

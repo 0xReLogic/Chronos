@@ -3,6 +3,7 @@ mod error;
 use tokio::sync::Mutex;
 use crate::parser::{Ast, Statement, Value, ColumnDefinition, DataType as ParserDataType, Condition, Operator};
 use crate::storage::{create_storage_engine, StorageEngine, StorageConfig, TableSchema, Column, DataType, Row, Filter, FilterOp};
+use crate::storage::offline_queue::PersistentQueuedOperation;
 
 pub use self::error::ExecutorError;
 
@@ -345,5 +346,29 @@ impl Executor {
             columns: col_names,
             rows: result_rows,
         })
+    }
+
+    pub async fn drain_offline_queue(&self, limit: usize) -> Result<Vec<PersistentQueuedOperation>, ExecutorError> {
+        self.storage
+            .drain_offline_queue(limit)
+            .await
+            .map_err(|e| ExecutorError::StorageError(e.to_string()))
+    }
+
+    pub async fn requeue_offline_ops(&self, ops: Vec<PersistentQueuedOperation>) -> Result<(), ExecutorError> {
+        self.storage
+            .requeue_offline_ops(ops)
+            .await
+            .map_err(|e| ExecutorError::StorageError(e.to_string()))
+    }
+
+    pub async fn apply_storage_operation(
+        &mut self,
+        op: crate::storage::wal::Operation,
+    ) -> Result<(), ExecutorError> {
+        self.storage
+            .apply_operation(op)
+            .await
+            .map_err(|e| ExecutorError::StorageError(e.to_string()))
     }
 }

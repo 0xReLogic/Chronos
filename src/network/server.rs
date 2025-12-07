@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
 use log::{info, error, debug};
@@ -9,6 +10,9 @@ use crate::parser::Parser;
 use crate::network::proto::raft_service_server::RaftService;
 use crate::network::proto::sql_service_server::SqlService;
 use crate::network::proto::health_service_server::HealthService;
+use crate::network::proto::sync_service_server::SyncService;
+use crate::common::timestamp::HybridTimestamp;
+use crate::storage::wal::Operation as WalOperation;
 
 use super::proto::*;
 use crate::network::ConnectivityState;
@@ -141,6 +145,93 @@ impl HealthService for HealthServer {
             ConnectivityState::Reconnecting => "Reconnecting",
         };
         Ok(Response::new(HealthResponse { state: state_str.to_string() }))
+    }
+}
+
+pub struct SyncServer {
+    executor: Arc<Mutex<Executor>>,
+    lww_state: Arc<Mutex<HashMap<(String, Vec<u8>), HybridTimestamp>>>,
+}
+
+impl SyncServer {
+    pub fn new(executor: Arc<Mutex<Executor>>) -> Self {
+        Self {
+            executor,
+            lww_state: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl SyncService for SyncServer {
+    async fn sync(
+        &self,
+        request: Request<SyncRequest>,
+    ) -> Result<Response<SyncResponse>, Status> {
+        let req = request.into_inner();
+        let mut applied: u64 = 0;
+
+        let mut executor = self.executor.lock().await;
+        let mut lww = self.lww_state.lock().await;
+
+        for op in req.operations {
+            let data = op.data;
+            let decoded: Result<
+                (
+                    crate::storage::offline_queue::PersistentQueuedOperation,
+                    usize,
+                ),
+                _,
+            > = bincode::serde::decode_from_slice(&data, bincode::config::standard());
+
+            match decoded {
+                Ok((entry, _len)) => {
+                    // Derive LWW key from the underlying operation
+                    let (table, key_bytes) = match &entry.operation {
+                        WalOperation::Insert { table, key, .. } => (table.clone(), key.clone()),
+                        WalOperation::Update { table, key, .. } => (table.clone(), key.clone()),
+                        WalOperation::Delete { table, key } => (table.clone(), key.clone()),
+                    };
+                    let map_key = (table, key_bytes);
+
+                    // Last-Write-Wins: skip if we have a newer or equal timestamp
+                    let ts = entry.timestamp;
+                    let should_apply = match lww.get(&map_key) {
+                        Some(prev_ts) if *prev_ts >= ts => {
+                            info!(
+                                "Skipping stale synced operation id={} due to LWW (prev_ts >= new_ts)",
+                                entry.id
+                            );
+                            false
+                        }
+                        _ => {
+                            lww.insert(map_key, ts);
+                            true
+                        }
+                    };
+
+                    if !should_apply {
+                        continue;
+                    }
+
+                    if let Err(e) = executor
+                        .apply_storage_operation(entry.operation.clone())
+                        .await
+                    {
+                        error!("Failed to apply synced operation id={}: {}", entry.id, e);
+                        continue;
+                    }
+                    applied += 1;
+                }
+                Err(e) => {
+                    error!("Failed to decode SyncOperation id={}: {}", op.id, e);
+                }
+            }
+        }
+
+        info!("SyncServer applied {} operations from edge", applied);
+
+        Ok(Response::new(SyncResponse { applied }))
     }
 }
 
