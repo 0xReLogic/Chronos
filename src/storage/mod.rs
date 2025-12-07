@@ -32,6 +32,11 @@ pub trait StorageEngine: Send + Sync {
     
     /// Delete rows matching filter
     async fn delete(&mut self, table_name: &str, filter: Filter) -> Result<usize>;
+
+    /// Cleanup expired rows based on TTL metadata (if supported). Returns number of deleted rows.
+    async fn cleanup_expired(&mut self, _now_secs: u64, _limit: usize) -> Result<u64> {
+        Ok(0)
+    }
     
     /// Create index on column
     async fn create_index(&mut self, table_name: &str, column: &str) -> Result<()>;
@@ -74,6 +79,7 @@ pub trait StorageEngine: Send + Sync {
 pub struct TableSchema {
     pub name: String,
     pub columns: Vec<Column>,
+    pub ttl_seconds: Option<u64>,
 }
 
 /// Column definition

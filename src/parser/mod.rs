@@ -4,7 +4,7 @@ pub mod error;
 use pest::Parser as PestParser;
 use pest_derive::Parser;
 
-pub use self::ast::{Ast, ColumnDefinition, DataType, Statement, Value, Condition, Operator, Assignment};
+pub use self::ast::{Ast, ColumnDefinition, DataType, Statement, Value, Condition, Operator, Assignment, TtlSpec};
 pub use self::error::ParserError;
 
 #[derive(Parser)]
@@ -32,7 +32,7 @@ mod tests {
         let ast = Parser::parse(sql).unwrap();
         
         match ast {
-            Ast::Statement(Statement::CreateTable { table_name, columns }) => {
+            Ast::Statement(Statement::CreateTable { table_name, columns, .. }) => {
                 assert_eq!(table_name, "users");
                 assert_eq!(columns.len(), 3);
                 assert_eq!(columns[0].name, "id");

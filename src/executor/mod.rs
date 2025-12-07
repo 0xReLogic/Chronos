@@ -1,7 +1,7 @@
 mod error;
 
 use tokio::sync::Mutex;
-use crate::parser::{Ast, Statement, Value, ColumnDefinition, DataType as ParserDataType, Condition, Operator};
+use crate::parser::{Ast, Statement, Value, ColumnDefinition, DataType as ParserDataType, Condition, Operator, TtlSpec};
 use crate::storage::{create_storage_engine, StorageEngine, StorageConfig, TableSchema, Column, DataType, Row, Filter, FilterOp};
 use crate::storage::offline_queue::PersistentQueuedOperation;
 
@@ -182,8 +182,8 @@ impl Executor {
     /// Executes a statement directly against the storage engine, bypassing transaction logic.
     async fn execute_immediate(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
         match stmt {
-            Statement::CreateTable { table_name, columns } => {
-                let schema = self.convert_to_table_schema(&table_name, &columns);
+            Statement::CreateTable { table_name, columns, ttl } => {
+                let schema = self.convert_to_table_schema(&table_name, &columns, ttl);
                 
                 self.storage.create_table(&table_name, schema).await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
@@ -271,21 +271,30 @@ impl Executor {
     }
     
     // Helper conversion methods
-    fn convert_to_table_schema(&self, table_name: &str, columns: &[ColumnDefinition]) -> TableSchema {
+    fn convert_to_table_schema(
+        &self,
+        table_name: &str,
+        columns: &[ColumnDefinition],
+        ttl: Option<TtlSpec>,
+    ) -> TableSchema {
         TableSchema {
             name: table_name.to_string(),
-            columns: columns.iter().map(|col| Column {
-                name: col.name.clone(),
-                data_type: match col.data_type {
-                    ParserDataType::Int => DataType::Int,
-                    ParserDataType::Text | ParserDataType::String => DataType::String,
-                    ParserDataType::Float => DataType::Float,
-                    ParserDataType::Boolean => DataType::Boolean,
-                },
-            }).collect(),
+            columns: columns
+                .iter()
+                .map(|col| Column {
+                    name: col.name.clone(),
+                    data_type: match col.data_type {
+                        ParserDataType::Int => DataType::Int,
+                        ParserDataType::Text | ParserDataType::String => DataType::String,
+                        ParserDataType::Float => DataType::Float,
+                        ParserDataType::Boolean => DataType::Boolean,
+                    },
+                })
+                .collect(),
+            ttl_seconds: ttl.map(|t| t.seconds),
         }
     }
-    
+
     async fn convert_to_row(&self, table_name: &str, columns: Option<&[String]>, values: &[Value]) -> Result<Row, ExecutorError> {
         let schema = self.storage.get_schema(table_name).await
             .map_err(|e| ExecutorError::StorageError(e.to_string()))?
@@ -368,6 +377,13 @@ impl Executor {
     ) -> Result<(), ExecutorError> {
         self.storage
             .apply_operation(op)
+            .await
+            .map_err(|e| ExecutorError::StorageError(e.to_string()))
+    }
+
+    pub async fn cleanup_expired(&mut self, now_secs: u64, limit: usize) -> Result<u64, ExecutorError> {
+        self.storage
+            .cleanup_expired(now_secs, limit)
             .await
             .map_err(|e| ExecutorError::StorageError(e.to_string()))
     }

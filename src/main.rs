@@ -1,7 +1,11 @@
 use std::path::Path;
-use clap::{Parser, Subcommand};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use clap::{Parser, Subcommand};
 use tokio::sync::Mutex;
+use tokio::time::sleep;
+
 use chronos::Executor;
 use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
 use env_logger::Env;
@@ -61,6 +65,10 @@ enum Command {
         /// Maximum number of operations per sync batch
         #[arg(long, default_value_t = 100)]
         sync_batch_size: usize,
+
+        /// Interval in seconds between TTL cleanup passes
+        #[arg(long, default_value_t = 3600)]
+        ttl_cleanup_interval_secs: u64,
     },
     
     /// Start the Chronos client REPL
@@ -118,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
-        Command::Node { id, data_dir, address, peers, clean, sync_target, sync_interval_secs, sync_batch_size } => {
+        Command::Node { id, data_dir, address, peers, clean, sync_target, sync_interval_secs, sync_batch_size, ttl_cleanup_interval_secs } => {
             info!("Starting Chronos node {id} at {address}");
 
             let node_data_dir = format!("{data_dir}/{id}");
@@ -198,6 +206,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Arc::clone(&sync_status),
                 );
                 tokio::spawn(worker.run());
+            }
+
+            // Start a background TTL cleanup task that periodically removes
+            // expired rows based on table TTL metadata. This runs on every
+            // node independently and is best-effort: errors are logged but
+            // do not terminate the node.
+            {
+                let executor_clone = Arc::clone(&executor);
+                tokio::spawn(async move {
+                    let limit: usize = 1000;
+
+                    loop {
+                        let now_secs = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+
+                        let mut exec = executor_clone.lock().await;
+                        match exec.cleanup_expired(now_secs, limit).await {
+                            Ok(cleaned) => {
+                                if cleaned > 0 {
+                                    log::info!(
+                                        "TTL cleanup removed {} expired rows (now_secs={})",
+                                        cleaned,
+                                        now_secs
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("TTL cleanup error: {}", e);
+                            }
+                        }
+
+                        sleep(Duration::from_secs(ttl_cleanup_interval_secs)).await;
+                    }
+                });
             }
 
             info!("gRPC server listening on {addr}");

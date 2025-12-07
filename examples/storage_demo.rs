@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
                 data_type: DataType::String,
             },
         ],
+        ttl_seconds: None,
     };
     
     engine.create_table("iot_sensors", schema).await?;

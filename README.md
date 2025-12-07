@@ -53,6 +53,7 @@ graph TD
 - **Built in Rust:** Leverages Rust's performance, safety, and concurrency features to build a reliable system.
 - **Offline-First for Edge:** HLC timestamps, WAL + recovery, and offline queues (client + persistent storage) are designed for intermittent networks in IoT deployments.
 - **Edge-Optimized Storage:** Secondary indexes on Sled, transparent row-level LZ4 compression, and an in-memory LRU row cache on indexed query paths.
+- **Data Retention with TTL:** Per-table TTL (e.g. `CREATE TABLE sensors (id INT, temp FLOAT) WITH TTL=7d;`) with a background cleanup worker at a configurable interval (default 3600s) in node mode.
 
 ---
 
@@ -231,6 +232,19 @@ These fields come from `SyncStatusState`, which is updated by `SyncWorker` on ea
 
 ---
 
+## TTL & Data Retention
+
+Chronos supports per-table TTL configured at table creation time:
+
+```sql
+CREATE TABLE sensors (id INT, temp FLOAT) WITH TTL=7d;
+```
+
+Rows in `sensors` become eligible for deletion once they are older than 7 days, based on the wall-clock time (`SystemTime::now`) recorded at insert.
+
+In **node mode**, TTL is enforced by a background cleanup task running on each node every `ttl_cleanup_interval_secs` seconds (CLI flag, default `3600`). The task scans a compact TTL index and deletes expired rows, keeping secondary indexes and the in-memory LRU cache consistent.
+
+---
 
 ## Performance Benchmarks
 
@@ -240,15 +254,29 @@ Tested on Ubuntu 24.04.3 LTS with Sled storage engine (size-optimized build):
 - Optimized release build: **3.7MB** 
 - Suitable for edge devices and embedded systems
 
-**Insert Performance:**
-- 100 rows: ~10.5ms (median)
-- 1,000 rows: ~23.6ms (median)
-- Approx throughput (with WAL + HLC): ~40,000 rows/second (batch inserts of 1,000 rows)
+**Insert Performance (single batch, no TTL):**
+- 100 rows: ~10ms (median)
+- 1,000 rows: ~34ms (median)
+- Approx throughput for 1,000-row batch: **~28k rows/second** (including WAL + HLC overhead)
 
-**Query Performance (Full Scan):**
-- 100 rows: ~9.8ms
-- 1,000 rows: ~25.0ms
-- Linear scaling with low variance
+**Insert Performance (single batch, with per-table TTL):**
+- 1,000 rows: ~44ms (median)
+- Approx throughput: **~22k rows/second** (about 20–25% overhead vs. no-TTL)
+
+**IoT-style Small-Batch Inserts (1,000 total rows):**
+- 1 row per batch (1,000 × 1-row inserts)
+  - No TTL: ~292ms  → **~3.4k rows/second**
+  - With TTL: ~298ms → **~3.3k rows/second**
+- 10 rows per batch (100 × 10-row inserts)
+  - No TTL: ~67ms   → **~15k rows/second**
+  - With TTL: ~79ms → **~12.6k rows/second**
+
+These numbers are from a single Chronos node on a modest dev machine. They are sufficient for hundreds of industrial sensors producing 10–20 events per second per sensor, even with TTL-based data retention enabled.
+
+**Query Performance (Full Scan, no TTL):**
+- 100 rows: ~10–11ms
+- 1,000 rows: ~36–38ms
+- Near-linear scaling for small tables used in edge scenarios
 
 Run benchmarks yourself:
 ```bash

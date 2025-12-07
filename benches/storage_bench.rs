@@ -43,9 +43,37 @@ async fn create_sensor_table(engine: &mut Box<dyn StorageEngine>) {
                 data_type: DataType::Float,
             },
         ],
+        ttl_seconds: None,
     };
     
     engine.create_table("sensors", schema).await.unwrap();
+}
+
+async fn create_sensor_table_with_ttl(engine: &mut Box<dyn StorageEngine>, ttl_seconds: u64) {
+    let schema = TableSchema {
+        name: "sensors_ttl".to_string(),
+        columns: vec![
+            Column {
+                name: "sensor_id".to_string(),
+                data_type: DataType::Int,
+            },
+            Column {
+                name: "timestamp".to_string(),
+                data_type: DataType::Int,
+            },
+            Column {
+                name: "temperature".to_string(),
+                data_type: DataType::Float,
+            },
+            Column {
+                name: "humidity".to_string(),
+                data_type: DataType::Float,
+            },
+        ],
+        ttl_seconds: Some(ttl_seconds),
+    };
+
+    engine.create_table("sensors_ttl", schema).await.unwrap();
 }
 
 fn generate_sensor_rows(count: usize) -> Vec<Row> {
@@ -85,6 +113,100 @@ fn benchmark_insert(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_insert_small_batches(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut group = c.benchmark_group("insert_small_batches");
+    let total_rows: usize = 1000;
+
+    for &batch_size in &[1_usize, 10_usize, 100_usize] {
+        group.bench_with_input(
+            BenchmarkId::new("sled_batch", batch_size),
+            &batch_size,
+            |b, &batch_size| {
+                b.to_async(&runtime).iter(|| async move {
+                    let (mut engine, _temp) = setup_storage(StorageConfig::Sled {
+                        data_dir: "./bench_data".to_string(),
+                    })
+                    .await;
+
+                    create_sensor_table(&mut engine).await;
+
+                    let rows = generate_sensor_rows(total_rows);
+                    for chunk in rows.chunks(batch_size) {
+                        engine.insert("sensors", chunk.to_vec()).await.unwrap();
+                    }
+
+                    black_box(engine);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn benchmark_insert_small_batches_ttl(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut group = c.benchmark_group("insert_small_batches_ttl");
+    let total_rows: usize = 1000;
+
+    for &batch_size in &[1_usize, 10_usize, 100_usize] {
+        group.bench_with_input(
+            BenchmarkId::new("sled_ttl_batch", batch_size),
+            &batch_size,
+            |b, &batch_size| {
+                b.to_async(&runtime).iter(|| async move {
+                    let (mut engine, _temp) = setup_storage(StorageConfig::Sled {
+                        data_dir: "./bench_data".to_string(),
+                    })
+                    .await;
+
+                    create_sensor_table_with_ttl(&mut engine, 24 * 60 * 60).await;
+
+                    let rows = generate_sensor_rows(total_rows);
+                    for chunk in rows.chunks(batch_size) {
+                        engine
+                            .insert("sensors_ttl", chunk.to_vec())
+                            .await
+                            .unwrap();
+                    }
+
+                    black_box(engine);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn benchmark_insert_ttl(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut group = c.benchmark_group("insert_ttl");
+    for size in [100, 1000] {
+        group.bench_with_input(BenchmarkId::new("sled_ttl", size), &size, |b, &size| {
+            b.to_async(&runtime).iter(|| async {
+                let (mut engine, _temp) = setup_storage(StorageConfig::Sled {
+                    data_dir: "./bench_data".to_string(),
+                })
+                .await;
+
+                // Table with a relatively long TTL so that TTL index is
+                // maintained on insert, but cleanup work is not part of the
+                // benchmark.
+                create_sensor_table_with_ttl(&mut engine, 24 * 60 * 60).await;
+
+                let rows = generate_sensor_rows(size);
+                engine.insert("sensors_ttl", rows).await.unwrap();
+
+                black_box(engine);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 fn benchmark_query(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("query");
@@ -112,5 +234,12 @@ fn benchmark_query(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_insert, benchmark_query);
+criterion_group!(
+    benches,
+    benchmark_insert,
+    benchmark_insert_ttl,
+    benchmark_insert_small_batches,
+    benchmark_insert_small_batches_ttl,
+    benchmark_query,
+);
 criterion_main!(benches);

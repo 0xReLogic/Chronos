@@ -32,6 +32,8 @@ SET = { ^"SET" }
 DELETE = { ^"DELETE" }
 INDEX = { ^"INDEX" }
 ON = { ^"ON" }
+WITH = { ^"WITH" }
+TTL = { ^"TTL" }
 
 // Identifiers
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -50,6 +52,12 @@ boolean_literal = @{ ^"TRUE" | ^"FALSE" }
 null_literal = @{ NULL }
 literal = { string_literal | float_literal | integer_literal | boolean_literal | null_literal }
 
+// TTL
+number_literal = @{ ASCII_DIGIT+ }
+unit = { "s" | "m" | "h" | "d" }
+ttl_value = { number_literal ~ unit? }
+ttl_clause = { WITH ~ TTL ~ "=" ~ ttl_value }
+
 // Operators
 comparison_operator = { "=" | "!=" | "<" | ">" | "<=" | ">=" }
 
@@ -65,7 +73,7 @@ assignment = { column_name ~ "=" ~ value }
 assignment_list = { assignment ~ ("," ~ assignment)* }
 
 // Statements
-create_table_stmt = { CREATE ~ TABLE ~ table_name ~ column_list ~ ";" }
+create_table_stmt = { CREATE ~ TABLE ~ table_name ~ column_list ~ ttl_clause? ~ ";" }
 create_index_stmt = { CREATE ~ INDEX ~ identifier ~ ON ~ table_name ~ "(" ~ column_name ~ ")" ~ ";" }
 insert_stmt = { INSERT ~ INTO ~ table_name ~ ("(" ~ column_name ~ ("," ~ column_name)* ~ ")")? ~ VALUES ~ value_list ~ ";" }
 select_stmt = { SELECT ~ column_selector ~ FROM ~ table_name ~ where_clause? ~ ";" }

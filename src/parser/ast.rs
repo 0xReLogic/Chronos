@@ -18,6 +18,31 @@ pub struct ColumnDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+pub struct TtlSpec {
+    pub seconds: u64,
+}
+
+fn parse_ttl_value(raw: &str) -> Result<TtlSpec, ParserError> {
+    // raw format: digits + optional unit (s|m|h|d)
+    if raw.is_empty() {
+        return Err(ParserError::InvalidSyntax("TTL value missing".to_string()));
+    }
+    let (num_part, unit_part) = raw.split_at(raw.chars().take_while(|c| c.is_ascii_digit()).count());
+    if num_part.is_empty() {
+        return Err(ParserError::InvalidSyntax("TTL numeric part missing".to_string()));
+    }
+    let n: u64 = num_part.parse().map_err(|_| ParserError::InvalidSyntax("TTL parse error".to_string()))?;
+    let seconds = match unit_part {
+        "s" | "" => n,
+        "m" => n * 60,
+        "h" => n * 60 * 60,
+        "d" => n * 60 * 60 * 24,
+        _ => return Err(ParserError::InvalidSyntax("TTL unit invalid".to_string())),
+    };
+    Ok(TtlSpec { seconds })
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
 pub enum Value {
     String(String),
     Integer(i64),
@@ -79,6 +104,7 @@ pub enum Statement {
     CreateTable {
         table_name: String,
         columns: Vec<ColumnDefinition>,
+        ttl: Option<TtlSpec>,
     },
     Insert {
         table_name: String,
@@ -172,6 +198,7 @@ fn parse_statement(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
 fn parse_create_table(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
     let mut table_name = String::new();
     let mut columns = Vec::new();
+    let mut ttl: Option<TtlSpec> = None;
     
     for pair in pairs {
         match pair.as_rule() {
@@ -186,11 +213,18 @@ fn parse_create_table(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
                     }
                 }
             }
+            Rule::ttl_clause => {
+                for inner in pair.into_inner() {
+                    if inner.as_rule() == Rule::ttl_value {
+                        ttl = Some(parse_ttl_value(inner.as_str())?);
+                    }
+                }
+            }
             _ => {}
         }
     }
     
-    Ok(Ast::Statement(Statement::CreateTable { table_name, columns }))
+    Ok(Ast::Statement(Statement::CreateTable { table_name, columns, ttl }))
 }
 
 fn parse_column_definition(pairs: Pairs<Rule>) -> Result<ColumnDefinition, ParserError> {

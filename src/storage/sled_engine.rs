@@ -9,6 +9,7 @@ use super::{
     TableSchema,
 };
 use anyhow::Result;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use tokio::sync::Mutex as TokioMutex;
@@ -17,6 +18,8 @@ use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 
 const SCHEMA_TREE: &str = "__schemas__";
 const INDEX_META_TREE: &str = "__indexes__";
+#[allow(dead_code)]
+const TTL_TREE: &str = "__ttl__";
 
 pub struct SledEngine {
     db: sled::Db,
@@ -69,6 +72,13 @@ impl SledEngine {
     fn index_meta_tree(&self) -> Result<sled::Tree> {
         self.db
             .open_tree(INDEX_META_TREE)
+            .map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+
+    #[allow(dead_code)]
+    fn ttl_tree(&self) -> Result<sled::Tree> {
+        self.db
+            .open_tree(TTL_TREE)
             .map_err(|e| StorageError::SledError(e.to_string()).into())
     }
     
@@ -135,6 +145,13 @@ impl StorageEngine for SledEngine {
         
         let schema = self.get_schema(table_name).await?
             .ok_or_else(|| StorageError::TableNotFound(table_name.to_string()))?;
+
+        let ttl_seconds = schema.ttl_seconds;
+        let ttl_tree = if ttl_seconds.is_some() {
+            Some(self.ttl_tree()?)
+        } else {
+            None
+        };
         
         let row_count = rows.len();
         for row in rows {
@@ -175,6 +192,18 @@ impl StorageEngine for SledEngine {
 
             tree.insert(key.as_bytes(), value)?;
 
+            if let (Some(ttl), Some(ttl_tree)) = (ttl_seconds, ttl_tree.as_ref()) {
+                let expiration_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .saturating_add(ttl);
+                let ttl_key = format!("{:020}:{}:{}", expiration_ts, table_name, key);
+                ttl_tree
+                    .insert(ttl_key.as_bytes(), &[])
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+            }
+
             // Maintain secondary indexes for this table, if configured
             let index_meta = self.index_meta_tree()?;
             for col in &schema.columns {
@@ -204,6 +233,13 @@ impl StorageEngine for SledEngine {
             .map_err(|e| StorageError::SledError(e.to_string()))?;
         tree.flush_async().await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+        if let Some(ttl_tree) = ttl_tree {
+            ttl_tree
+                .flush_async()
+                .await
+                .map_err(|e| StorageError::SledError(e.to_string()))?;
+        }
         
         log::debug!("Inserted {} rows into table '{}'", row_count, table_name);
         
@@ -453,6 +489,140 @@ impl StorageEngine for SledEngine {
         Ok(())
     }
 
+    async fn cleanup_expired(&mut self, now_secs: u64, limit: usize) -> Result<u64> {
+        let ttl_tree = self.ttl_tree()?;
+        let mut to_cleanup: Vec<(sled::IVec, String, String)> = Vec::new();
+
+        for item in ttl_tree.iter() {
+            let (key, _) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            let key_str = String::from_utf8_lossy(&key);
+            let mut parts = key_str.splitn(3, ':');
+
+            let ts_str = match parts.next() {
+                Some(s) => s,
+                None => continue,
+            };
+            let table_name = match parts.next() {
+                Some(t) => t.to_string(),
+                None => continue,
+            };
+            let row_key_str = match parts.next() {
+                Some(r) => r.to_string(),
+                None => continue,
+            };
+
+            let expiration_ts: u64 = match ts_str.parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            if expiration_ts > now_secs {
+                break;
+            }
+
+            to_cleanup.push((key.clone(), table_name, row_key_str));
+
+            if to_cleanup.len() >= limit {
+                break;
+            }
+        }
+
+        if to_cleanup.is_empty() {
+            return Ok(0);
+        }
+
+        let mut per_table_indexed: HashMap<String, Vec<String>> = HashMap::new();
+        let index_meta = self.index_meta_tree()?;
+        let mut deleted_rows: u64 = 0;
+
+        for (ttl_key, table_name, row_key_str) in to_cleanup {
+            let table_tree = self.table_tree(&table_name)?;
+            let row_key_bytes = row_key_str.as_bytes();
+
+            let stored = match table_tree
+                .get(row_key_bytes)
+                .map_err(|e| StorageError::SledError(e.to_string()))?
+            {
+                Some(v) => v,
+                None => {
+                    ttl_tree
+                        .remove(&ttl_key)
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                    continue;
+                }
+            };
+
+            let value = decompress_row(&stored)?;
+            let (row, _): (Row, usize) =
+                bincode::decode_from_slice(&value, bincode::config::standard())?;
+
+            let indexed_cols = if let Some(cols) = per_table_indexed.get(&table_name) {
+                cols.clone()
+            } else {
+                let schema = match self.get_schema(&table_name).await? {
+                    Some(s) => s,
+                    None => {
+                        ttl_tree
+                            .remove(&ttl_key)
+                            .map_err(|e| StorageError::SledError(e.to_string()))?;
+                        continue;
+                    }
+                };
+
+                let mut cols: Vec<String> = Vec::new();
+                for col in &schema.columns {
+                    let meta_key = format!("{}:{}", table_name, col.name);
+                    let has_index = index_meta
+                        .contains_key(meta_key.as_bytes())
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                    if has_index {
+                        cols.push(col.name.clone());
+                    }
+                }
+                per_table_indexed.insert(table_name.clone(), cols.clone());
+                cols
+            };
+
+            if !indexed_cols.is_empty() {
+                for col_name in &indexed_cols {
+                    if let Some(col_value) = row.get(col_name) {
+                        let index_tree = self.index_tree(&table_name, col_name)?;
+                        let index_key = format!(
+                            "{}:{}",
+                            serde_json::to_string(col_value)?,
+                            row_key_str
+                        );
+                        index_tree
+                            .remove(index_key.as_bytes())
+                            .map_err(|e| StorageError::SledError(e.to_string()))?;
+                    }
+                }
+            }
+
+            {
+                let mut cache = self.cache.lock().await;
+                let cache_key = (table_name.clone(), row_key_bytes.to_vec());
+                cache.pop(&cache_key);
+            }
+
+            table_tree
+                .remove(row_key_bytes)
+                .map_err(|e| StorageError::SledError(e.to_string()))?;
+            ttl_tree
+                .remove(&ttl_key)
+                .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+            deleted_rows += 1;
+        }
+
+        self.db
+            .flush_async()
+            .await
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+        Ok(deleted_rows)
+    }
+
     async fn drain_offline_queue(&self, limit: usize) -> Result<Vec<crate::storage::offline_queue::PersistentQueuedOperation>> {
         let mut queue = self.offline_queue.lock().await;
         queue.drain(limit).map_err(|e| StorageError::SledError(e.to_string()).into())
@@ -471,8 +641,24 @@ impl StorageEngine for SledEngine {
             Operation::Insert { table, key, value } => {
                 let table_tree = self.table_tree(&table)?;
                 table_tree
-                    .insert(key, value)
+                    .insert(key.clone(), value)
                     .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+                if let Some(schema) = self.get_schema(&table).await? {
+                    if let Some(ttl) = schema.ttl_seconds {
+                        let expiration_ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            .saturating_add(ttl);
+                        let ttl_tree = self.ttl_tree()?;
+                        let row_key_str = String::from_utf8_lossy(&key).to_string();
+                        let ttl_key = format!("{:020}:{}:{}", expiration_ts, table, row_key_str);
+                        ttl_tree
+                            .insert(ttl_key.as_bytes(), &[])
+                            .map_err(|e| StorageError::SledError(e.to_string()))?;
+                    }
+                }
             }
             Operation::Update { table, key, value } => {
                 let table_tree = self.table_tree(&table)?;
@@ -562,6 +748,7 @@ mod tests {
                     data_type: DataType::String,
                 },
             ],
+            ttl_seconds: None,
         };
         
         engine.create_table("users", schema).await.unwrap();
@@ -587,6 +774,7 @@ mod tests {
                     data_type: DataType::Float,
                 },
             ],
+            ttl_seconds: None,
         };
         
         engine.create_table("sensors", schema).await.unwrap();
@@ -618,6 +806,7 @@ mod tests {
                     data_type: DataType::Float,
                 },
             ],
+            ttl_seconds: None,
         };
 
         engine.create_table("sensors", schema).await.unwrap();
@@ -666,6 +855,7 @@ mod tests {
                     data_type: DataType::Float,
                 },
             ],
+            ttl_seconds: None,
         };
 
         engine.create_table("sensors", schema).await.unwrap();
@@ -718,5 +908,97 @@ mod tests {
         assert_eq!(results2.len(), 1);
         let row = &results2[0];
         assert_eq!(row.get("sensor_id"), Some(&Value::Integer(2)));
+    }
+
+    #[tokio::test]
+    async fn test_sled_ttl_cleanup_with_index() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let temp_dir = TempDir::new().unwrap();
+        let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap()).unwrap();
+
+        let schema = TableSchema {
+            name: "sensors_ttl".to_string(),
+            columns: vec![
+                Column {
+                    name: "sensor_id".to_string(),
+                    data_type: DataType::Int,
+                },
+                Column {
+                    name: "temperature".to_string(),
+                    data_type: DataType::Float,
+                },
+            ],
+            ttl_seconds: Some(1),
+        };
+
+        engine.create_table("sensors_ttl", schema).await.unwrap();
+
+        // Insert three rows, two of which share the same sensor_id
+        let mut row1 = Row::new();
+        row1.insert("sensor_id".to_string(), Value::Integer(1));
+        row1.insert("temperature".to_string(), Value::Float(25.5));
+
+        let mut row2 = Row::new();
+        row2.insert("sensor_id".to_string(), Value::Integer(2));
+        row2.insert("temperature".to_string(), Value::Float(30.0));
+
+        let mut row3 = Row::new();
+        row3.insert("sensor_id".to_string(), Value::Integer(1));
+        row3.insert("temperature".to_string(), Value::Float(26.0));
+
+        engine
+            .insert("sensors_ttl", vec![row1, row2, row3])
+            .await
+            .unwrap();
+
+        // Create an index on sensor_id so that TTL cleanup must also
+        // maintain secondary index entries and the LRU cache.
+        engine
+            .create_index("sensors_ttl", "sensor_id")
+            .await
+            .unwrap();
+
+        // Sanity check: rows are visible before TTL cleanup.
+        let all_before = engine.query("sensors_ttl", None).await.unwrap();
+        assert_eq!(all_before.len(), 3);
+
+        let filter_before = Filter {
+            column: "sensor_id".to_string(),
+            op: FilterOp::Eq,
+            value: Value::Integer(1),
+        };
+        let indexed_before = engine
+            .query("sensors_ttl", Some(filter_before))
+            .await
+            .unwrap();
+        assert_eq!(indexed_before.len(), 2);
+
+        // Advance now_secs far beyond the TTL so that all rows are expired.
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let cleaned = engine
+            .cleanup_expired(now_secs + 3600, 1000)
+            .await
+            .unwrap();
+        assert_eq!(cleaned, 3);
+
+        // After cleanup, no rows should be visible via full scan...
+        let all_after = engine.query("sensors_ttl", None).await.unwrap();
+        assert_eq!(all_after.len(), 0);
+
+        // ...or via the indexed query path.
+        let filter_after = Filter {
+            column: "sensor_id".to_string(),
+            op: FilterOp::Eq,
+            value: Value::Integer(1),
+        };
+        let indexed_after = engine
+            .query("sensors_ttl", Some(filter_after))
+            .await
+            .unwrap();
+        assert_eq!(indexed_after.len(), 0);
     }
 }
