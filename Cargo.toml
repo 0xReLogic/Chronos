@@ -1,9 +1,9 @@
 [package]
 name = "chronos"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 description = "A SQL database built from scratch in Rust"
-authors = ["Your Name"]
+authors = ["Allen Elzayn"]
 
 [dev-dependencies]
 tempfile = "3.3.0"

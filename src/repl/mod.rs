@@ -1,5 +1,6 @@
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use std::collections::VecDeque;
 
 use crate::parser::{Parser, Value};
 use crate::executor::Executor;
@@ -9,6 +10,7 @@ pub struct Repl {
     rl: DefaultEditor,
     distributed_mode: bool,
     sql_client: Option<crate::network::SqlClient>,
+    pending_sql: VecDeque<String>,
 }
 
 impl Repl {
@@ -18,6 +20,7 @@ impl Repl {
             rl: DefaultEditor::new().expect("Failed to create line editor"),
             distributed_mode: false,
             sql_client: None,
+            pending_sql: VecDeque::new(),
         }
     }
     
@@ -27,7 +30,35 @@ impl Repl {
             rl: DefaultEditor::new().expect("Failed to create line editor"),
             distributed_mode: true,
             sql_client: Some(crate::network::SqlClient::new(leader_address)),
+            pending_sql: VecDeque::new(),
         }
+    }
+    
+    fn enqueue_sql(&mut self, sql: String) {
+        const MAX_QUEUE: usize = 10_000;
+        if self.pending_sql.len() >= MAX_QUEUE {
+            self.pending_sql.pop_front();
+        }
+        self.pending_sql.push_back(sql);
+    }
+    
+    async fn flush_pending_for(
+        client: &mut crate::network::SqlClient,
+        pending_sql: &mut VecDeque<String>,
+    ) -> Result<(), crate::network::NetworkError> {
+        while let Some(sql) = pending_sql.pop_front() {
+            match client.execute_sql(&sql).await {
+                Ok(_response) => {
+                    // Do not print results for flushed commands
+                }
+                Err(e) => {
+                    // Put back the failed command and stop flushing
+                    pending_sql.push_front(sql);
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
     }
     
     pub async fn run(&mut self) {
@@ -57,7 +88,13 @@ impl Repl {
                     if self.distributed_mode {
                         // In distributed mode, send the SQL to the leader
                         if let Some(client) = &mut self.sql_client {
-                            // Since we are in an async method, we can .await directly
+                            // Flush any queued commands first
+                            if let Err(e) = Self::flush_pending_for(client, &mut self.pending_sql).await {
+                                eprintln!("Network error while flushing queued commands: {e}. Command queued locally");
+                                self.enqueue_sql(line);
+                                continue;
+                            }
+
                             match client.execute_sql(&line).await {
                                 Ok(response) => {
                                     if !response.success {
@@ -95,7 +132,8 @@ impl Repl {
                                     }
                                 },
                                 Err(e) => {
-                                    eprintln!("Network error: {e}");
+                                    eprintln!("Network error: {e}. Command queued locally");
+                                    self.enqueue_sql(line);
                                 },
                             }
                         } else {

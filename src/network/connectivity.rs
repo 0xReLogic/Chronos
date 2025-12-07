@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
+use tonic::transport::Endpoint;
 
-use crate::network::client::SqlClient;
+use crate::network::proto::health_service_client::HealthServiceClient;
+use crate::network::proto::HealthRequest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectivityState {
@@ -58,10 +60,23 @@ impl ConnectivityMonitor {
     }
 
     async fn check_once(target: &str) -> bool {
-        let mut client = SqlClient::new(target);
-        match client.execute_sql("SELECT 1").await {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        let endpoint = match Endpoint::from_shared(format!("http://{}", target)) {
+            Ok(ep) => ep,
+            Err(_) => return false,
+        };
+
+        let channel = match endpoint
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(5))
+            .connect()
+            .await
+        {
+            Ok(ch) => ch,
+            Err(_) => return false,
+        };
+
+        let mut client = HealthServiceClient::new(channel);
+
+        client.get_connectivity(HealthRequest {}).await.is_ok()
     }
 }

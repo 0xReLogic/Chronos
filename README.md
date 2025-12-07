@@ -1,11 +1,13 @@
-# Chronos: A Distributed SQL Database in Rust
+# ChronosDB: Distributed SQL for Edge & IoT
 
 [![Rust CI](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml/badge.svg)](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Chronos is not just another database; it's a journey into the heart of distributed systems, built from the ground up in Rust.** It leverages the power of the Raft consensus algorithm to create a fault-tolerant, consistent SQL database that can withstand node failures without losing data.
+ChronosDB is a small distributed SQL database written in Rust, designed for edge gateways and IoT workloads. It uses the Raft consensus algorithm for replication and Sled as the embedded storage engine. The focus is on:
 
-This project was born from a desire to deeply understand and implement the complex mechanics behind modern distributed databases.
+- Running on resource-constrained devices (small binary, low overhead).
+- Handling intermittent networks with offline-first behavior.
+- Providing a simple SQL interface for sensor and time-series style data.
 
 ---
 
@@ -49,6 +51,7 @@ graph TD
 - **Persistent Storage:** Data is persisted to disk using Sled embedded database, ensuring durability and fast performance.
 - **Async I/O:** Fully asynchronous storage operations with Tokio runtime for efficient concurrent access.
 - **Built in Rust:** Leverages Rust's performance, safety, and concurrency features to build a reliable system.
+ - **Offline-First for Edge:** HLC timestamps, WAL + recovery, and offline queues (client + persistent storage) are designed for intermittent networks in IoT deployments.
 
 ---
 
@@ -78,7 +81,7 @@ Open three separate terminals.
 
 **Terminal 1 (Node 1):**
 ```bash
-cargo run --release -- Node \
+cargo run --release -- node \
   --id node1 \
   --data-dir data \
   --address 127.0.0.1:8000 \
@@ -87,7 +90,7 @@ cargo run --release -- Node \
 
 **Terminal 2 (Node 2):**
 ```bash
-cargo run --release -- Node \
+cargo run --release -- node \
   --id node2 \
   --data-dir data \
   --address 127.0.0.1:8001 \
@@ -96,7 +99,7 @@ cargo run --release -- Node \
 
 **Terminal 3 (Node 3):**
 ```bash
-cargo run --release -- Node \
+cargo run --release -- node \
   --id node3 \
   --data-dir data \
   --address 127.0.0.1:8002 \
@@ -108,7 +111,7 @@ cargo run --release -- Node \
 Open a fourth terminal.
 
 ```bash
-cargo run --release -- Client --leader 127.0.0.1:8000
+cargo run --release -- client --leader 127.0.0.1:8000
 ```
 
 ### 5. Execute SQL
@@ -182,14 +185,19 @@ Chronos is a learning project and is not intended for production use. It current
 
 ## Edge/IoT Roadmap
 
-Current focus:
+See `ROADMAP.md` for full details.
+
+Current status:
 
 - Phase 0: Foundation (completed).
-- Phase 1: Offline-First Mode (in progress):
+- Phase 1: Offline-First Mode (completed):
   - Hybrid Logical Clock (HLC) timestamps for write operations.
   - Write-ahead log (WAL) on Sled with recovery on startup.
   - Connectivity detection and a gRPC health service per node.
-  - Offline write queue core structures (integration and persistence are next).
+  - Offline queue support:
+    - In-memory queue in the distributed client REPL for network outages.
+    - Persistent backing queue in `storage::offline_queue` (Sled tree `__offline_queue__`) for future sync.
+- Phase 2: Sync Protocol (next): delta sync and conflict resolution built on top of these queues.
 
 ## License
 

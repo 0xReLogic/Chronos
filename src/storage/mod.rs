@@ -2,6 +2,7 @@ pub mod csv_engine;
 pub mod sled_engine;
 pub mod error;
 pub mod wal;
+pub mod offline_queue;
 
 pub use csv_engine::CsvEngine;
 pub use sled_engine::SledEngine;
@@ -89,6 +90,12 @@ impl Row {
     
     pub fn get(&self, column: &str) -> Option<&Value> {
         self.values.get(column)
+    }
+}
+
+impl Default for Row {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
