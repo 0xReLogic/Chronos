@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chronos::Executor;
-use chronos::network::SyncWorker;
+use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
 use env_logger::Env;
 use log::info;
 
@@ -163,6 +163,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Create executor
             let executor = Arc::new(Mutex::new(Executor::new(&node_data_dir).await));
             
+            // Shared sync status (used by SyncWorker and gRPC)
+            let sync_status: SharedSyncStatus = Arc::new(Mutex::new(SyncStatusState::default()));
+            
             // Start Raft
             let raft_config = RaftConfig::new(&id, &node_data_dir);
             let raft = Raft::new(raft_config);
@@ -180,6 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let sql_server = chronos::network::SqlServer::new(Arc::clone(&raft.node), Arc::clone(&executor));
             let health_server = chronos::network::HealthServer::new(Arc::clone(&connectivity_state));
             let sync_server = chronos::network::SyncServer::new(Arc::clone(&executor));
+            let sync_status_server = SyncStatusServer::new(Arc::clone(&sync_status));
 
             // If this node is configured as an edge node with a sync target,
             // start a background SyncWorker that drains the persistent
@@ -191,6 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     target,
                     std::time::Duration::from_secs(sync_interval_secs),
                     sync_batch_size,
+                    Arc::clone(&sync_status),
                 );
                 tokio::spawn(worker.run());
             }
@@ -201,6 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .add_service(chronos::network::proto::sql_service_server::SqlServiceServer::new(sql_server))
                 .add_service(chronos::network::proto::health_service_server::HealthServiceServer::new(health_server))
                 .add_service(chronos::network::proto::sync_service_server::SyncServiceServer::new(sync_server))
+                .add_service(chronos::network::proto::sync_status_service_server::SyncStatusServiceServer::new(sync_status_server))
                 .serve(addr)
                 .await?;
         },

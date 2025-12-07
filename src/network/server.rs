@@ -11,11 +11,13 @@ use crate::network::proto::raft_service_server::RaftService;
 use crate::network::proto::sql_service_server::SqlService;
 use crate::network::proto::health_service_server::HealthService;
 use crate::network::proto::sync_service_server::SyncService;
+use crate::network::proto::sync_status_service_server::SyncStatusService;
 use crate::common::timestamp::HybridTimestamp;
 use crate::storage::wal::Operation as WalOperation;
 
 use super::proto::*;
 use crate::network::ConnectivityState;
+use crate::network::sync_status::SharedSyncStatus;
 
 
 pub struct RaftServer {
@@ -25,6 +27,32 @@ pub struct RaftServer {
 impl RaftServer {
     pub fn new(node: Arc<Mutex<RaftNode>>) -> Self {
         Self { node }
+    }
+}
+
+pub struct SyncStatusServer {
+    state: SharedSyncStatus,
+}
+
+impl SyncStatusServer {
+    pub fn new(state: SharedSyncStatus) -> Self {
+        Self { state }
+    }
+}
+
+#[tonic::async_trait]
+impl SyncStatusService for SyncStatusServer {
+    async fn get_sync_status(
+        &self,
+        _request: Request<SyncStatusRequest>,
+    ) -> Result<Response<SyncStatusResponse>, Status> {
+        let status = self.state.lock().await;
+        Ok(Response::new(SyncStatusResponse {
+            last_sync_ts_ms: status.last_sync_ts_ms,
+            last_sync_applied: status.last_sync_applied,
+            pending_ops: status.pending_ops,
+            last_error: status.last_error.clone().unwrap_or_default(),
+        }))
     }
 }
 

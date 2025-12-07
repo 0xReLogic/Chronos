@@ -107,3 +107,17 @@ message SyncRequest {
 message SyncResponse {
   uint64 applied = 1;
 }
+
+// Sync status service to expose lightweight sync metrics from an edge node.
+service SyncStatusService {
+  rpc GetSyncStatus (SyncStatusRequest) returns (SyncStatusResponse);
+}
+
+message SyncStatusRequest {}
+
+message SyncStatusResponse {
+  uint64 last_sync_ts_ms = 1;
+  uint64 last_sync_applied = 2;
+  uint64 pending_ops = 3;
+  string last_error = 4;
+}

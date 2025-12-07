@@ -51,7 +51,8 @@ graph TD
 - **Persistent Storage:** Data is persisted to disk using Sled embedded database, ensuring durability and fast performance.
 - **Async I/O:** Fully asynchronous storage operations with Tokio runtime for efficient concurrent access.
 - **Built in Rust:** Leverages Rust's performance, safety, and concurrency features to build a reliable system.
- - **Offline-First for Edge:** HLC timestamps, WAL + recovery, and offline queues (client + persistent storage) are designed for intermittent networks in IoT deployments.
+- **Offline-First for Edge:** HLC timestamps, WAL + recovery, and offline queues (client + persistent storage) are designed for intermittent networks in IoT deployments.
+- **Edge-Optimized Storage:** Secondary indexes on Sled, transparent row-level LZ4 compression, and an in-memory LRU row cache on indexed query paths.
 
 ---
 
@@ -75,11 +76,38 @@ cd Chronos
 cargo build --release
 ```
 
-### 3. Run the Cluster
+### 3. Running Modes
 
-Open three separate terminals.
+This project currently supports a few main ways of running Chronos.
 
-**Terminal 1 (Node 1):**
+#### 3.1 Single-node local mode (no Raft, no sync)
+
+Simplest way to try SQL and local storage:
+
+```bash
+cargo run --release -- single-node --data-dir data
+```
+
+This will open a local REPL:
+
+```text
+Welcome to Chronos SQL Database
+Running in single-node mode
+Enter SQL statements or 'exit' to quit
+chronos> CREATE TABLE sensors (sensor_id INT, temperature FLOAT);
+chronos> INSERT INTO sensors (sensor_id, temperature) VALUES (1, 25.5);
+chronos> SELECT * FROM sensors;
+chronos> exit
+```
+
+---
+
+#### 3.2 3-node Raft cluster (consensus demo)
+
+Open three terminals.
+
+**Terminal 1 (node1):**
+
 ```bash
 cargo run --release -- node \
   --id node1 \
@@ -88,7 +116,8 @@ cargo run --release -- node \
   --peers node2=127.0.0.1:8001,node3=127.0.0.1:8002
 ```
 
-**Terminal 2 (Node 2):**
+**Terminal 2 (node2):**
+
 ```bash
 cargo run --release -- node \
   --id node2 \
@@ -97,7 +126,8 @@ cargo run --release -- node \
   --peers node1=127.0.0.1:8000,node3=127.0.0.1:8002
 ```
 
-**Terminal 3 (Node 3):**
+**Terminal 3 (node3):**
+
 ```bash
 cargo run --release -- node \
   --id node3 \
@@ -106,44 +136,101 @@ cargo run --release -- node \
   --peers node1=127.0.0.1:8000,node2=127.0.0.1:8001
 ```
 
-### 4. Connect with the Client
-
-Open a fourth terminal.
+**Client REPL (another terminal):**
 
 ```bash
-cargo run --release -- client --leader 127.0.0.1:8000
+cargo run --release -- client --leader 127.0.0.1:8000 --data-dir data
 ```
 
-### 5. Execute SQL
-
-Now you can interact with your distributed database!
+Contoh SQL:
 
 ```sql
 chronos> CREATE TABLE users (id INT, name STRING, balance FLOAT);
-Query OK
-
 chronos> INSERT INTO users (id, name, balance) VALUES (1, 'Alice', 100.50);
-Query OK
-
 chronos> INSERT INTO users (id, name, balance) VALUES (2, 'Bob', 250.75);
-Query OK
-
 chronos> SELECT id, name, balance FROM users;
-+----+-------+---------+
-| id | name  | balance |
-+----+-------+---------+
-| 1  | Alice | 100.5   |
-| 2  | Bob   | 250.75  |
-+----+-------+---------+
-
--- Delete a record
-DELETE FROM users WHERE name = 'Bob';
-
--- Use a transaction
-BEGIN;
-INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 40);
-COMMIT;
 ```
+
+---
+
+#### 3.3 Edge + Cloud demo (offline-first + sync)
+
+**Cloud node (central):**
+
+```bash
+cargo run --release -- node \
+  --id cloud \
+  --data-dir data \
+  --address 127.0.0.1:8000 \
+  --clean
+```
+
+**Edge node (gateway that syncs to the cloud):**
+
+```bash
+cargo run --release -- node \
+  --id edge \
+  --data-dir data \
+  --address 127.0.0.1:8001 \
+  --clean \
+  --sync-target http://127.0.0.1:8000 \
+  --sync-interval-secs 5 \
+  --sync-batch-size 100
+```
+
+**Client to edge (write sensor data):**
+
+```bash
+cargo run --release -- client --leader 127.0.0.1:8001 --data-dir data
+```
+
+Di REPL edge:
+
+```sql
+chronos> CREATE TABLE sensors (sensor_id INT, temperature FLOAT);
+chronos> INSERT INTO sensors (sensor_id, temperature) VALUES (1, 25.5);
+chronos> INSERT INTO sensors (sensor_id, temperature) VALUES (2, 30.0);
+chronos> INSERT INTO sensors (sensor_id, temperature) VALUES (1, 26.0);
+```
+
+**Client to cloud (check data that has been synced):**
+
+```bash
+cargo run --release -- client --leader 127.0.0.1:8000 --data-dir data
+```
+
+```sql
+chronos> SELECT * FROM sensors;
+```
+
+---
+
+#### 3.4 Check sync status with gRPC
+
+If you have `grpcurl` installed, you can query lightweight sync status from the edge node (in this example `127.0.0.1:8001`):
+
+```bash
+grpcurl -plaintext \
+  -import-path ./proto \
+  -proto raft.proto \
+  127.0.0.1:8001 \
+  raft.SyncStatusService/GetSyncStatus
+```
+
+Example output:
+
+```json
+{
+  "lastSyncTsMs": "1765127479252",
+  "lastSyncApplied": "3",
+  "pendingOps": "3"
+}
+```
+
+These fields come from `SyncStatusState`, which is updated by `SyncWorker` on each sync attempt.
+
+---
+
 
 ## Performance Benchmarks
 
@@ -172,16 +259,6 @@ Try the IoT sensor demo:
 ```bash
 cargo run --example storage_demo
 ```
-
-## Development Status
-
-Chronos is a learning project and is not intended for production use. It currently implements:
-
-- SQL parsing with Pest and execution (CREATE, INSERT, SELECT, UPDATE, DELETE, CREATE INDEX)
-- Sled embedded database for persistent storage with async I/O
-- Raft consensus algorithm for leader election and log replication
-- gRPC-based networking for node communication with Protocol Buffers
-- Async/await architecture with Tokio runtime
 
 ## License
 

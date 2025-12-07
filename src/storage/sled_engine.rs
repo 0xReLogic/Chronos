@@ -9,8 +9,11 @@ use super::{
     TableSchema,
 };
 use anyhow::Result;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use tokio::sync::Mutex as TokioMutex;
+use lru::LruCache;
+use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 
 const SCHEMA_TREE: &str = "__schemas__";
 const INDEX_META_TREE: &str = "__indexes__";
@@ -19,6 +22,7 @@ pub struct SledEngine {
     db: sled::Db,
     wal_sequence: u64,
     offline_queue: TokioMutex<PersistentOfflineQueue>,
+    cache: TokioMutex<LruCache<(String, Vec<u8>), Row>>,
 }
 
 impl SledEngine {
@@ -32,8 +36,10 @@ impl SledEngine {
         log::info!("Sled storage engine initialized at {:?}", path);
         
         let offline_queue = PersistentOfflineQueue::new(&db)?;
-        
-        Ok(Self { db, wal_sequence: 0, offline_queue: TokioMutex::new(offline_queue) })
+        let cache_capacity = NonZeroUsize::new(10_000).expect("non-zero cache size");
+        let cache = TokioMutex::new(LruCache::new(cache_capacity));
+
+        Ok(Self { db, wal_sequence: 0, offline_queue: TokioMutex::new(offline_queue), cache })
     }
     
     fn table_tree(&self, table_name: &str) -> Result<sled::Tree> {
@@ -75,6 +81,27 @@ impl SledEngine {
                 .as_nanos(),
             rand::random::<u32>()
         )
+    }
+}
+
+fn compress_row(bytes: &[u8]) -> Result<Vec<u8>, StorageError> {
+    // Prefix with 0x01 to indicate compressed payload; legacy uncompressed
+    // rows will not have this prefix and will be decoded as-is.
+    let mut out = Vec::with_capacity(1 + bytes.len());
+    out.push(1);
+    let mut compressed = compress_prepend_size(bytes);
+    out.append(&mut compressed);
+    Ok(out)
+}
+
+fn decompress_row(bytes: &[u8]) -> Result<Vec<u8>, StorageError> {
+    match bytes.first() {
+        Some(1) => {
+            // New compressed format
+            decompress_size_prepended(&bytes[1..])
+                .map_err(|e| StorageError::SledError(e.to_string()))
+        }
+        _ => Ok(bytes.to_vec()), // Legacy uncompressed row
     }
 }
 
@@ -121,7 +148,8 @@ impl StorageEngine for SledEngine {
             }
             
             let key = self.generate_row_key();
-            let value = bincode::encode_to_vec(&row, bincode::config::standard())?;
+            let raw_value = bincode::encode_to_vec(&row, bincode::config::standard())?;
+            let value = compress_row(&raw_value)?;
 
             self.wal_sequence = self.wal_sequence.wrapping_add(1);
             let op = Operation::Insert {
@@ -196,22 +224,46 @@ impl StorageEngine for SledEngine {
                         let (_index_key, row_key) = item
                             .map_err(|e| StorageError::SledError(e.to_string()))?;
 
-                        if let Some(value) = tree
-                            .get(&row_key)
-                            .map_err(|e| StorageError::SledError(e.to_string()))?
-                        {
+                        let cache_key = (table_name.to_string(), row_key.to_vec());
+
+                        // Check cache first
+                        let cached_row = {
+                            let mut cache = self.cache.lock().await;
+                            cache.get(&cache_key).cloned()
+                        };
+
+                        let row = if let Some(row) = cached_row {
+                            row
+                        } else {
+                            // Fallback to storage
+                            let stored = match tree
+                                .get(&row_key)
+                                .map_err(|e| StorageError::SledError(e.to_string()))?
+                            {
+                                Some(v) => v,
+                                None => continue,
+                            };
+                            let value = decompress_row(&stored)?;
                             let (row, _): (Row, usize) =
                                 bincode::decode_from_slice(&value, bincode::config::standard())?;
 
-                            // Extra safety: still apply the filter in case of type mismatches
-                            if let Some(ref f) = filter {
-                                if !f.matches(&row) {
-                                    continue;
-                                }
+                            // Insert into cache
+                            {
+                                let mut cache = self.cache.lock().await;
+                                cache.put(cache_key, row.clone());
                             }
 
-                            results.push(row);
+                            row
+                        };
+
+                        // Extra safety: still apply the filter in case of type mismatches
+                        if let Some(ref f) = filter {
+                            if !f.matches(&row) {
+                                continue;
+                            }
                         }
+
+                        results.push(row);
                     }
 
                     log::debug!(
@@ -227,7 +279,8 @@ impl StorageEngine for SledEngine {
 
         // Fallback: full table scan
         for item in tree.iter() {
-            let (_key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            let (_key, stored) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            let value = decompress_row(&stored)?;
             let (row, _): (Row, usize) =
                 bincode::decode_from_slice(&value, bincode::config::standard())?;
 
@@ -267,8 +320,10 @@ impl StorageEngine for SledEngine {
         let mut to_delete = Vec::new();
         let mut rows_for_index: Vec<(sled::IVec, Row)> = Vec::new();
         for item in tree.iter() {
-            let (key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
-            let (row, _): (Row, usize) = bincode::decode_from_slice(&value, bincode::config::standard())?;
+            let (key, stored) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            let value = decompress_row(&stored)?;
+            let (row, _): (Row, usize) =
+                bincode::decode_from_slice(&value, bincode::config::standard())?;
             
             if filter.matches(&row) {
                 to_delete.push(key.clone());
@@ -296,6 +351,16 @@ impl StorageEngine for SledEngine {
             }
         }
 
+        // Invalidate cache entries for deleted rows
+        if !rows_for_index.is_empty() {
+            let table = table_name.to_string();
+            let mut cache = self.cache.lock().await;
+            for (key, _) in &rows_for_index {
+                let cache_key = (table.clone(), key.to_vec());
+                cache.pop(&cache_key);
+            }
+        }
+
         for key in to_delete {
             tree.remove(key)?;
             deleted += 1;
@@ -315,7 +380,8 @@ impl StorageEngine for SledEngine {
 
         // Build the initial index from existing rows
         for item in table_tree.iter() {
-            let (row_key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            let (row_key, stored) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            let value = decompress_row(&stored)?;
             let (row, _): (Row, usize) =
                 bincode::decode_from_slice(&value, bincode::config::standard())?;
 
