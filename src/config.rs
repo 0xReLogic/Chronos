@@ -18,8 +18,6 @@ pub struct PeerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum StorageConfig {
-    #[serde(rename = "csv")]
-    Csv { data_dir: String },
     #[serde(rename = "sled")]
     Sled { data_dir: String },
 }

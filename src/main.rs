@@ -1,3 +1,5 @@
+use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,12 +10,72 @@ use tokio::time::sleep;
 
 use chronos::Executor;
 use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
-use env_logger::Env;
+use env_logger::{Env, Target};
 use log::info;
 
 use chronos::repl::Repl;
 
 use chronos::raft::{Raft, RaftConfig};
+
+struct RotatingFile {
+    path: String,
+    max_size: u64,
+    max_files: u32,
+    file: File,
+    current_size: u64,
+}
+
+impl RotatingFile {
+    fn new(path: String, max_size: u64, max_files: u32) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        let current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok(Self {
+            path,
+            max_size,
+            max_files,
+            file,
+            current_size,
+        })
+    }
+
+    fn rotate(&mut self) -> io::Result<()> {
+        // Close current file by dropping and reopening later
+        // Rotate existing files: path.N-1 -> path.N, ..., path.1 -> path.2, path -> path.1
+        for i in (1..self.max_files).rev() {
+            let src = format!("{}.{}", self.path, i);
+            let dst = format!("{}.{}", self.path, i + 1);
+            let _ = std::fs::rename(&src, &dst);
+        }
+
+        let _ = std::fs::rename(&self.path, format!("{}.1", self.path));
+
+        self.file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
+        self.current_size = 0;
+        Ok(())
+    }
+}
+
+impl Write for RotatingFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.current_size + buf.len() as u64 > self.max_size {
+            self.rotate()?;
+        }
+        let n = self.file.write(buf)?;
+        self.current_size += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "chronos")]
@@ -85,8 +147,30 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logger
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    // Initialize logger (default to WARN; override with RUST_LOG if needed)
+    let mut builder = env_logger::Builder::from_env(Env::default().default_filter_or("warn"));
+
+    if let Ok(path) = std::env::var("CHRONOS_LOG_FILE") {
+        let max_size_mb = std::env::var("CHRONOS_LOG_MAX_SIZE_MB")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(10);
+        let max_files = std::env::var("CHRONOS_LOG_MAX_FILES")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(3);
+
+        match RotatingFile::new(path.clone(), max_size_mb * 1024 * 1024, max_files) {
+            Ok(rot) => {
+                builder.target(Target::Pipe(Box::new(rot)));
+            }
+            Err(e) => {
+                eprintln!("Failed to initialize rotating log file {}: {}. Falling back to stderr.", path, e);
+            }
+        }
+    }
+
+    builder.init();
     
     // Parse command line arguments
     let cli = Cli::parse();

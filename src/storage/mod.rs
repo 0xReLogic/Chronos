@@ -1,10 +1,8 @@
-pub mod csv_engine;
 pub mod sled_engine;
 pub mod error;
 pub mod wal;
 pub mod offline_queue;
 
-pub use csv_engine::CsvEngine;
 pub use sled_engine::SledEngine;
 pub use error::StorageError;
 
@@ -208,16 +206,12 @@ impl Filter {
 /// Storage configuration
 #[derive(Debug, Clone)]
 pub enum StorageConfig {
-    Csv { data_dir: String },
     Sled { data_dir: String },
 }
 
 /// Factory for creating storage engines
 pub fn create_storage_engine(config: StorageConfig) -> Result<Box<dyn StorageEngine>> {
     match config {
-        StorageConfig::Csv { data_dir } => {
-            Ok(Box::new(csv_engine::CsvEngine::new(&data_dir)?))
-        }
         StorageConfig::Sled { data_dir } => {
             Ok(Box::new(sled_engine::SledEngine::new(&data_dir)?))
         }

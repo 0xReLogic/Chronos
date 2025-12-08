@@ -19,6 +19,8 @@ use super::proto::*;
 use crate::network::ConnectivityState;
 use crate::network::sync_status::SharedSyncStatus;
 
+type LwwStateMap = HashMap<(String, Vec<u8>), HybridTimestamp>;
+
 
 pub struct RaftServer {
     node: Arc<Mutex<RaftNode>>,
@@ -178,7 +180,7 @@ impl HealthService for HealthServer {
 
 pub struct SyncServer {
     executor: Arc<Mutex<Executor>>,
-    lww_state: Arc<Mutex<HashMap<(String, Vec<u8>), HybridTimestamp>>>,
+    lww_state: Arc<Mutex<LwwStateMap>>,
 }
 
 impl SyncServer {

@@ -57,6 +57,34 @@ graph TD
 
 ---
 
+## Logging
+
+Chronos uses the standard `log`/`env_logger` stack:
+
+- Default log level is **WARN**, which keeps edge deployments quiet by default.
+- You can override this with `RUST_LOG`, for example:
+
+  ```bash
+  # Enable info logs for Chronos only
+  RUST_LOG=chronos=info cargo run --release -- node ...
+
+  # Enable debug logs globally (more verbose)
+  RUST_LOG=debug cargo run --release -- node ...
+  ```
+
+- Optional rotating file logging can be enabled via:
+
+  ```bash
+  CHRONOS_LOG_FILE=chronos.log \
+  CHRONOS_LOG_MAX_SIZE_MB=10 \
+  CHRONOS_LOG_MAX_FILES=3 \
+  cargo run --release -- node ...
+  ```
+
+This allows you to keep production nodes quiet while still enabling detailed diagnostics when needed.
+
+---
+
 ## Quick Start
 
 Get a Chronos cluster up and running in minutes.
@@ -244,6 +272,50 @@ Rows in `sensors` become eligible for deletion once they are older than 7 days, 
 
 In **node mode**, TTL is enforced by a background cleanup task running on each node every `ttl_cleanup_interval_secs` seconds (CLI flag, default `3600`). The task scans a compact TTL index and deletes expired rows, keeping secondary indexes and the in-memory LRU cache consistent.
 
+---
+
+## Time-Window Aggregations (1h/24h/7d AVG)
+
+Chronos provides simple moving averages for `FLOAT` columns over common time windows via dedicated aggregate functions:
+
+```sql
+-- Last 1 hour
+SELECT AVG_1H(temperature) FROM sensors;
+
+-- Last 24 hours
+SELECT AVG_24H(temperature) FROM sensors;
+
+-- Last 7 days
+SELECT AVG_7D(temperature) FROM sensors;
+```
+
+- Windows are trailing 1 hour / 24 hours / 7 days based on wall-clock time at insert/query.
+- State is maintained in-memory using fixed-size minute/hour/day buckets and updated on every `INSERT`.
+- Currently only `FLOAT` columns participate in these aggregations.
+- Each function returns a single row with a single column `avg_1h(column_name)`, `avg_24h(column_name)`, or `avg_7d(column_name)`.
+- Aggregation state is snapshotted via an Executor-local Sled tree and does not currently support additional filters, grouping, or multi-column projections.
+
+This is an initial, edge-focused implementation; the roadmap includes extending to richer query shapes and tightening semantics for multi-node deployments.
+
+## Embedded Mode (in-process)
+
+Use Chronos directly as a library without starting a server:
+
+```rust
+use chronos::ChronosEmbedded;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db = ChronosEmbedded::new("./data").await;
+
+    db.execute("CREATE TABLE sensors (id INT, temperature FLOAT);").await?;
+    db.execute("INSERT INTO sensors (id, temperature) VALUES (1, 25.5);").await?;
+
+    let rows = db.execute("SELECT id, temperature FROM sensors;").await?;
+    println!("{:?}", rows.rows);
+
+    Ok(())
+}
 ---
 
 ## Performance Benchmarks

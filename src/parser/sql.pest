@@ -34,6 +34,9 @@ INDEX = { ^"INDEX" }
 ON = { ^"ON" }
 WITH = { ^"WITH" }
 TTL = { ^"TTL" }
+AVG_1H = { ^"AVG_1H" }
+AVG_24H = { ^"AVG_24H" }
+AVG_7D = { ^"AVG_7D" }
 
 // Identifiers
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -76,6 +79,9 @@ assignment_list = { assignment ~ ("," ~ assignment)* }
 create_table_stmt = { CREATE ~ TABLE ~ table_name ~ column_list ~ ttl_clause? ~ ";" }
 create_index_stmt = { CREATE ~ INDEX ~ identifier ~ ON ~ table_name ~ "(" ~ column_name ~ ")" ~ ";" }
 insert_stmt = { INSERT ~ INTO ~ table_name ~ ("(" ~ column_name ~ ("," ~ column_name)* ~ ")")? ~ VALUES ~ value_list ~ ";" }
+select_agg_1h_stmt = { SELECT ~ AVG_1H ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ ";" }
+select_agg_24h_stmt = { SELECT ~ AVG_24H ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ ";" }
+select_agg_7d_stmt = { SELECT ~ AVG_7D ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ ";" }
 select_stmt = { SELECT ~ column_selector ~ FROM ~ table_name ~ where_clause? ~ ";" }
 begin_stmt = { BEGIN ~ TRANSACTION? ~ ";" }
 commit_stmt = { COMMIT ~ ";" }
@@ -86,7 +92,18 @@ update_stmt = { UPDATE ~ table_name ~ SET ~ assignment_list ~ where_clause? ~ ";
 delete_stmt = { DELETE ~ FROM ~ table_name ~ where_clause? ~ ";" }
 
 // SQL statement
-sql_stmt = { create_table_stmt | create_index_stmt | insert_stmt | select_stmt | begin_stmt | commit_stmt | rollback_stmt | update_stmt | delete_stmt }
+sql_stmt = { create_table_stmt
+                 | create_index_stmt
+                 | insert_stmt
+                 | select_agg_1h_stmt
+                 | select_agg_24h_stmt
+                 | select_agg_7d_stmt
+                 | select_stmt
+                 | begin_stmt
+                 | commit_stmt
+                 | rollback_stmt
+                 | update_stmt
+                 | delete_stmt }
 
 // Entry point
 sql = { SOI ~ sql_stmt ~ EOI }

@@ -116,6 +116,18 @@ pub enum Statement {
         columns: Vec<String>,
         conditions: Option<Vec<Condition>>,
     },
+    SelectAgg1h {
+        table_name: String,
+        column_name: String,
+    },
+    SelectAgg24h {
+        table_name: String,
+        column_name: String,
+    },
+    SelectAgg7d {
+        table_name: String,
+        column_name: String,
+    },
     Begin,
     Commit,
     Rollback,
@@ -169,6 +181,15 @@ fn parse_statement(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             }
             Rule::insert_stmt => {
                 return parse_insert(pair.into_inner());
+            }
+            Rule::select_agg_1h_stmt => {
+                return parse_select_agg_1h(pair.into_inner());
+            }
+            Rule::select_agg_24h_stmt => {
+                return parse_select_agg_24h(pair.into_inner());
+            }
+            Rule::select_agg_7d_stmt => {
+                return parse_select_agg_7d(pair.into_inner());
             }
             Rule::select_stmt => {
                 return parse_select(pair.into_inner());
@@ -367,6 +388,63 @@ fn parse_select(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
     }
     
     Ok(Ast::Statement(Statement::Select { table_name, columns, conditions }))
+}
+
+fn parse_select_agg_1h(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectAgg1h { table_name, column_name }))
+}
+
+fn parse_select_agg_24h(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectAgg24h { table_name, column_name }))
+}
+
+fn parse_select_agg_7d(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectAgg7d { table_name, column_name }))
 }
 
 fn parse_create_index(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {

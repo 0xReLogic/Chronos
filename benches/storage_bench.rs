@@ -11,9 +11,6 @@ async fn setup_storage(config: StorageConfig) -> (Box<dyn StorageEngine>, TempDi
         StorageConfig::Sled { .. } => StorageConfig::Sled {
             data_dir: temp_dir.path().to_str().unwrap().to_string(),
         },
-        StorageConfig::Csv { .. } => StorageConfig::Csv {
-            data_dir: temp_dir.path().to_str().unwrap().to_string(),
-        },
     };
     
     let mut engine = create_storage_engine(config).unwrap();

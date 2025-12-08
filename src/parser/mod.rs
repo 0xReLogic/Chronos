@@ -132,4 +132,46 @@ mod tests {
             _ => panic!("Expected CreateIndex statement"),
         }
     }
+
+    #[test]
+    fn test_select_avg_1h() {
+        let sql = "SELECT AVG_1H(temp) FROM sensors;";
+        let ast = Parser::parse(sql).unwrap();
+
+        match ast {
+            Ast::Statement(Statement::SelectAgg1h { table_name, column_name }) => {
+                assert_eq!(table_name, "sensors");
+                assert_eq!(column_name, "temp");
+            }
+            _ => panic!("Expected SelectAgg1h statement"),
+        }
+    }
+
+    #[test]
+    fn test_select_avg_24h() {
+        let sql = "SELECT AVG_24H(temp) FROM sensors;";
+        let ast = Parser::parse(sql).unwrap();
+
+        match ast {
+            Ast::Statement(Statement::SelectAgg24h { table_name, column_name }) => {
+                assert_eq!(table_name, "sensors");
+                assert_eq!(column_name, "temp");
+            }
+            _ => panic!("Expected SelectAgg24h statement"),
+        }
+    }
+
+    #[test]
+    fn test_select_avg_7d() {
+        let sql = "SELECT AVG_7D(temp) FROM sensors;";
+        let ast = Parser::parse(sql).unwrap();
+
+        match ast {
+            Ast::Statement(Statement::SelectAgg7d { table_name, column_name }) => {
+                assert_eq!(table_name, "sensors");
+                assert_eq!(column_name, "temp");
+            }
+            _ => panic!("Expected SelectAgg7d statement"),
+        }
+    }
 }
