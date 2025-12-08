@@ -309,18 +309,23 @@ impl Executor {
                     let command = bincode::encode_to_vec(&ast, bincode::config::standard())
                         .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {e}")))?;
                     
-                    // Submit to Raft (release lock after this)
-                    {
+                    // Submit to Raft and wait for the log entry to be
+                    // committed and applied locally on the leader. This
+                    // ensures the write is durably replicated before we
+                    // return to the client.
+                    let rx = {
                         let mut node = node.lock().await;
                         node.submit_command(command)
-                            .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {e}")))?;
-                    }
-                    
-                    // For now, we'll just execute the command directly
-                    // In a real implementation, we would wait for the command to be committed
-                    match ast {
-                        Ast::Statement(stmt) => self.execute_statement(stmt).await,
-                    }
+                            .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {e}")))?
+                    };
+
+                    rx.await
+                        .map_err(|e| ExecutorError::ExecutionError(format!("Raft commit wait error: {e}")))?;
+
+                    // Once committed and applied via the Raft state machine,
+                    // we can execute a read-only view if needed. For now,
+                    // return an empty result for pure writes.
+                    Ok(QueryResult::empty())
                 } else {
                     // Raft node has been dropped
                     Err(ExecutorError::ExecutionError("Raft node not available".to_string()))
@@ -688,6 +693,36 @@ impl Executor {
             .set_lww_ts(table, key, ts)
             .await
             .map_err(|e| ExecutorError::StorageError(e.to_string()))
+    }
+
+    /// Apply a Raft log command that encodes an AST via bincode. This is
+    /// used by the Raft state machine apply worker to bring followers'
+    /// storage in sync with the leader.
+    pub async fn apply_raft_command(&mut self, cmd: Vec<u8>) -> Result<(), ExecutorError> {
+        let (ast, _): (Ast, usize) =
+            bincode::serde::decode_from_slice(&cmd, bincode::config::standard())
+                .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+        // Special-case CREATE TABLE so that Raft apply is idempotent on
+        // followers and on nodes that might have executed the statement
+        // previously while acting as leader. If the table already exists,
+        // we treat this as a no-op instead of an error.
+        if let Ast::Statement(Statement::CreateTable { table_name, .. }) = &ast {
+            let schema_exists = self
+                .storage
+                .get_schema(table_name)
+                .await
+                .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+            if schema_exists.is_some() {
+                return Ok(());
+            }
+        }
+
+        // We are only interested in the side effects of executing this
+        // statement (writes applied to storage, aggregates updated, etc.),
+        // not in returning rows to a client. Drop the QueryResult.
+        let _ = self.execute(ast).await?;
+        Ok(())
     }
 }
 

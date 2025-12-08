@@ -465,24 +465,6 @@ impl SqlService for SqlServer {
             }));
         }
         
-        // Submit the command to Raft
-        let command = bincode::serde::encode_to_vec(&ast, bincode::config::standard())
-            .map_err(|e| Status::internal(format!("Serialization error: {e}")))?;
-        
-        {
-            let mut node = self.node.lock().await;
-            info!("SqlServer::execute_sql: submitting command to Raft");
-            node.submit_command(command)
-                .map_err(|e| {
-                    error!("SqlServer::execute_sql: Raft submit_command error: {e}");
-                    Status::internal(format!("Raft error: {e}"))
-                })?;
-            debug!("SqlServer::execute_sql: Raft submit_command OK");
-        }
-        
-        // For now, we'll just execute the command directly
-        // In a real implementation, we would wait for the command to be committed
-        
         // Use tokio Mutex for async-safe locking
         let mut executor = self.executor.lock().await;
         info!("SqlServer::execute_sql: calling Executor::execute");

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use rand::Rng;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 // Use external log crate, not our own log module
 use ::log::{info, error, debug};
 
@@ -29,6 +29,12 @@ pub struct RaftNode {
     // Leader state
     next_index: HashMap<String, u64>,
     match_index: HashMap<String, u64>,
+    // Optional channel to forward committed commands to an external state
+    // machine (e.g., the SQL Executor) for application.
+    apply_sender: Option<mpsc::UnboundedSender<Vec<u8>>>,
+    // For the current leader: map of log index -> oneshot sender used to
+    // notify when a given entry has been committed and applied locally.
+    pending_commands: HashMap<u64, oneshot::Sender<()>>,
 }
 
 impl RaftNode {
@@ -53,7 +59,13 @@ impl RaftNode {
             votes_received: HashMap::new(),
             next_index: HashMap::new(),
             match_index: HashMap::new(),
+            apply_sender: None,
+            pending_commands: HashMap::new(),
         }
+    }
+
+    pub fn set_apply_sender(&mut self, sender: mpsc::UnboundedSender<Vec<u8>>) {
+        self.apply_sender = Some(sender);
     }
     
     pub fn config(&self) -> &RaftConfig {
@@ -151,7 +163,7 @@ impl RaftNode {
         Ok(())
     }
     
-    pub fn submit_command(&mut self, command: Vec<u8>) -> Result<(), RaftError> {
+    pub fn submit_command(&mut self, command: Vec<u8>) -> Result<oneshot::Receiver<()>, RaftError> {
         if !self.is_leader() {
             return Err(RaftError::NotLeader);
         }
@@ -162,12 +174,14 @@ impl RaftNode {
             command,
         };
         
-        let _log_index = self.log.append(entry)?;
+        let log_index = self.log.append(entry)?;
+        let (tx, rx) = oneshot::channel();
+        self.pending_commands.insert(log_index, tx);
         
         // Replicate to followers
         self.replicate_log()?;
         
-        Ok(())
+        Ok(rx)
     }
     
     pub fn replicate_log(&mut self) -> Result<(), RaftError> {
@@ -500,16 +514,30 @@ impl RaftNode {
                 // Apply the command to the state machine
                 debug!("Applying log entry {} (term {})", self.state.last_applied, entry.term);
                 
-                // In a real implementation, we would have a reference to the state machine (executor)
-                // and call apply_command on it
-                // For now, we just log it
-                debug!("Command: {:?}", entry.command);
-                
-                // If we had a state machine reference:
-                // if let Some(state_machine) = &self.state_machine {
-                //     state_machine.apply_command(&entry.command)
-                //         .map_err(|e| RaftError::ExecutionError(e.to_string()))?;
-                // }
+                // Forward the command to an external state machine (e.g. the
+                // SQL Executor) via an async channel. For now we only do this
+                // on non-leader nodes so that followers apply committed log
+                // entries to their local storage, while the leader continues
+                // to execute writes directly in the SQL path.
+                if !self.is_leader() {
+                    if let Some(tx) = &self.apply_sender {
+                        if let Err(e) = tx.send(entry.command.clone()) {
+                            error!(
+                                "Failed to forward committed command at index {}: {}",
+                                self.state.last_applied,
+                                e
+                            );
+                        }
+                    }
+                }
+
+                // If we are the leader, notify any waiter that this index has
+                // been committed and applied locally.
+                if self.is_leader() {
+                    if let Some(tx) = self.pending_commands.remove(&self.state.last_applied) {
+                        let _ = tx.send(());
+                    }
+                }
             }
         }
         
@@ -558,7 +586,7 @@ impl RaftNode {
                             }
                         }
                         (_, Err(e)) => {
-                            error!("Failed to send RequestVote to {peer_id_clone}: {e}");
+                            debug!("Failed to send RequestVote to {peer_id_clone}: {e}");
                         }
                         _ => {}
                     }
@@ -578,7 +606,7 @@ impl RaftNode {
                             }
                         }
                         (_, Err(e)) => {
-                            error!("Failed to send AppendEntries to {peer_id_clone}: {e}");
+                            debug!("Failed to send AppendEntries to {peer_id_clone}: {e}");
                         }
                         _ => {}
                     }

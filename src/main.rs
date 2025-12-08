@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::sleep;
 
 use chronos::Executor;
 use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
 use env_logger::{Env, Target};
-use log::info;
+use log::{info, error};
 
 use chronos::repl::Repl;
 
@@ -259,6 +259,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             // Start Raft with the configured peers and per-node data dir
             let raft = Raft::new(config);
+
+            {
+                let weak_node = Arc::downgrade(&raft.node);
+                let mut exec = executor.lock().await;
+                exec.set_raft_node(weak_node);
+            }
+            let (apply_tx, mut apply_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+            {
+                let mut node_lock = raft.node.lock().await;
+                node_lock.set_apply_sender(apply_tx);
+            }
+
+            {
+                let executor_for_apply = Arc::clone(&executor);
+                tokio::spawn(async move {
+                    while let Some(cmd) = apply_rx.recv().await {
+                        let mut exec = executor_for_apply.lock().await;
+                        if let Err(e) = exec.apply_command(&cmd).await {
+                            error!("Raft apply worker error: {}", e);
+                        }
+                    }
+                });
+            }
+
             let _node = Arc::clone(&raft.node);
             raft.start().await?;
             
