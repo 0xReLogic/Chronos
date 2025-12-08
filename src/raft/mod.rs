@@ -31,6 +31,11 @@ pub enum RaftMessage {
         term: u64,
         vote_granted: bool,
     },
+    RequestVoteResponseFromPeer {
+        peer_id: String,
+        term: u64,
+        vote_granted: bool,
+    },
     
     // Log replication messages
     AppendEntries {
@@ -42,6 +47,12 @@ pub enum RaftMessage {
         leader_commit: u64,
     },
     AppendEntriesResponse {
+        term: u64,
+        success: bool,
+        match_index: u64,
+    },
+    AppendEntriesResponseFromPeer {
+        peer_id: String,
         term: u64,
         success: bool,
         match_index: u64,

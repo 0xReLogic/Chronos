@@ -203,15 +203,19 @@ impl RaftNode {
             RaftMessage::RequestVote { term, candidate_id, last_log_index, last_log_term } => {
                 self.handle_request_vote(term, candidate_id, last_log_index, last_log_term)
             },
-            RaftMessage::RequestVoteResponse { term, vote_granted } => {
-                self.handle_request_vote_response(term, vote_granted).map(|_| None)
+            RaftMessage::RequestVoteResponseFromPeer { peer_id, term, vote_granted } => {
+                self.handle_request_vote_response(peer_id, term, vote_granted).map(|_| None)
             },
             RaftMessage::AppendEntries { term, leader_id, prev_log_index, prev_log_term, entries, leader_commit } => {
                 self.handle_append_entries(term, leader_id, prev_log_index, prev_log_term, entries, leader_commit)
             },
-            RaftMessage::AppendEntriesResponse { term, success, match_index } => {
-                self.handle_append_entries_response(term, success, match_index).map(|_| None)
+            RaftMessage::AppendEntriesResponseFromPeer { peer_id, term, success, match_index } => {
+                self.handle_append_entries_response(peer_id, term, success, match_index).map(|_| None)
             },
+            // Plain response variants should not normally be sent into the RaftNode
+            // event loop; they are wrapped into *_FromPeer by send_message_to_peer.
+            // Handle them as no-ops for robustness.
+            RaftMessage::RequestVoteResponse { .. } | RaftMessage::AppendEntriesResponse { .. } => Ok(None),
         }
     }
     
@@ -259,6 +263,7 @@ impl RaftNode {
     
     fn handle_request_vote_response(
         &mut self,
+        peer_id: String,
         term: u64,
         vote_granted: bool,
     ) -> Result<(), RaftError> {
@@ -272,17 +277,18 @@ impl RaftNode {
         
         // Only process if we're still a candidate and in the same term
         if self.state.role == NodeRole::Candidate && term == self.state.current_term
-            && vote_granted {
-                // Count the vote
-                self.votes_received.insert(String::from("peer"), true); // This is a placeholder, in a real implementation we'd use the peer's ID
-                
-                // Check if we have majority
-                let votes_needed = self.peers.len().div_ceil(2) + 1; // +1 for self
-                if self.votes_received.values().filter(|&&v| v).count() >= votes_needed {
-                    // We won the election!
-                    self.become_leader()?;
-                }
+            && vote_granted
+        {
+            // Count the vote for this specific peer
+            self.votes_received.insert(peer_id, true);
+
+            // Check if we have majority (peers + self)
+            let votes_needed = self.peers.len().div_ceil(2) + 1; // +1 for self
+            if self.votes_received.values().filter(|&&v| v).count() >= votes_needed {
+                // We won the election!
+                self.become_leader()?;
             }
+        }
         
         Ok(())
     }
@@ -400,6 +406,7 @@ impl RaftNode {
     
     fn handle_append_entries_response(
         &mut self,
+        peer_id: String,
         term: u64,
         success: bool,
         match_index: u64,
@@ -416,8 +423,6 @@ impl RaftNode {
         if self.state.role == NodeRole::Leader && term == self.state.current_term {
             if success {
                 // Update nextIndex and matchIndex for the follower
-                let peer_id = String::from("peer"); // This is a placeholder, in a real implementation we'd use the peer's ID
-                
                 self.match_index.insert(peer_id.clone(), match_index);
                 self.next_index.insert(peer_id, match_index + 1);
                 
@@ -425,7 +430,6 @@ impl RaftNode {
                 self.update_commit_index()?;
             } else {
                 // If AppendEntries failed because of log inconsistency, decrement nextIndex and retry
-                let peer_id = String::from("peer"); // This is a placeholder
                 let next_idx = self.next_index.get(&peer_id).cloned().unwrap_or(1);
                 if next_idx > 1 {
                     self.next_index.insert(peer_id, next_idx - 1);
@@ -532,6 +536,7 @@ impl RaftNode {
         let peer_addr = peer_addr.clone();
         let message_clone = message.clone();
         let peer_id_clone = peer_id.to_string(); // Clone the peer_id for the async block
+        let tx_opt = self.message_sender.clone();
         
         tokio::spawn(async move {
             use crate::network::RaftClient;
@@ -540,13 +545,42 @@ impl RaftNode {
             
             match message_clone {
                 RaftMessage::RequestVote { term, candidate_id, last_log_index, last_log_term } => {
-                    if let Err(e) = client.request_vote(term, &candidate_id, last_log_index, last_log_term).await {
-                        error!("Failed to send RequestVote to {peer_id_clone}: {e}");
+                    let resp = client.request_vote(term, &candidate_id, last_log_index, last_log_term).await;
+                    match (tx_opt, resp) {
+                        (Some(tx), Ok(RaftMessage::RequestVoteResponse { term, vote_granted })) => {
+                            let msg = RaftMessage::RequestVoteResponseFromPeer {
+                                peer_id: peer_id_clone.clone(),
+                                term,
+                                vote_granted,
+                            };
+                            if let Err(e) = tx.send(msg).await {
+                                error!("Failed to forward RequestVoteResponse from {peer_id_clone}: {e}");
+                            }
+                        }
+                        (_, Err(e)) => {
+                            error!("Failed to send RequestVote to {peer_id_clone}: {e}");
+                        }
+                        _ => {}
                     }
                 },
                 RaftMessage::AppendEntries { term, leader_id, prev_log_index, prev_log_term, entries, leader_commit } => {
-                    if let Err(e) = client.append_entries(term, &leader_id, prev_log_index, prev_log_term, entries, leader_commit).await {
-                        error!("Failed to send AppendEntries to {peer_id_clone}: {e}");
+                    let resp = client.append_entries(term, &leader_id, prev_log_index, prev_log_term, entries, leader_commit).await;
+                    match (tx_opt, resp) {
+                        (Some(tx), Ok(RaftMessage::AppendEntriesResponse { term, success, match_index })) => {
+                            let msg = RaftMessage::AppendEntriesResponseFromPeer {
+                                peer_id: peer_id_clone.clone(),
+                                term,
+                                success,
+                                match_index,
+                            };
+                            if let Err(e) = tx.send(msg).await {
+                                error!("Failed to forward AppendEntriesResponse from {peer_id_clone}: {e}");
+                            }
+                        }
+                        (_, Err(e)) => {
+                            error!("Failed to send AppendEntries to {peer_id_clone}: {e}");
+                        }
+                        _ => {}
                     }
                 },
                 _ => {

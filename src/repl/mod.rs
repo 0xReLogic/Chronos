@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use crate::parser::{Parser, Value};
 use crate::executor::Executor;
+use crate::network::NetworkError;
 
 pub struct Repl {
     executor: Option<Executor>,
@@ -52,9 +53,18 @@ impl Repl {
                     // Do not print results for flushed commands
                 }
                 Err(e) => {
-                    // Put back the failed command and stop flushing
-                    pending_sql.push_front(sql);
-                    return Err(e);
+                    match &e {
+                        // True network issues: re-queue and stop flushing
+                        NetworkError::ConnectionError(_) | NetworkError::TransportError(_) => {
+                            pending_sql.push_front(sql);
+                            return Err(e);
+                        }
+                        // Application-level errors from the leader: drop this bad
+                        // command so it doesn't poison the queue.
+                        NetworkError::RpcError(_) => {
+                            eprintln!("Remote execution error for queued command: {e}");
+                        }
+                    }
                 }
             }
         }
@@ -90,9 +100,17 @@ impl Repl {
                         if let Some(client) = &mut self.sql_client {
                             // Flush any queued commands first
                             if let Err(e) = Self::flush_pending_for(client, &mut self.pending_sql).await {
-                                eprintln!("Network error while flushing queued commands: {e}. Command queued locally");
-                                self.enqueue_sql(line);
-                                continue;
+                                match e {
+                                    NetworkError::ConnectionError(_) | NetworkError::TransportError(_) => {
+                                        eprintln!("Network error while flushing queued commands: {e}. Command queued locally");
+                                        self.enqueue_sql(line);
+                                        continue;
+                                    }
+                                    NetworkError::RpcError(_) => {
+                                        // Already reported per-command in flush_pending_for; do not
+                                        // treat as a network outage.
+                                    }
+                                }
                             }
 
                             match client.execute_sql(&line).await {
@@ -132,8 +150,17 @@ impl Repl {
                                     }
                                 },
                                 Err(e) => {
-                                    eprintln!("Network error: {e}. Command queued locally");
-                                    self.enqueue_sql(line);
+                                    match e {
+                                        NetworkError::ConnectionError(_) | NetworkError::TransportError(_) => {
+                                            eprintln!("Network error: {e}. Command queued locally");
+                                            self.enqueue_sql(line);
+                                        }
+                                        NetworkError::RpcError(_) => {
+                                            // Application-level error from leader (e.g. table already exists).
+                                            // Report it but do not queue the command.
+                                            eprintln!("Error from leader: {e}");
+                                        }
+                                    }
                                 },
                             }
                         } else {

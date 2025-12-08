@@ -282,12 +282,16 @@ impl SqlService for SqlServer {
         &self,
         request: Request<SqlRequest>,
     ) -> Result<Response<SqlResponse>, Status> {
+        info!("SqlServer::execute_sql: ENTER");
         let req = request.into_inner();
-        info!("Received SQL: {}", req.sql);
+        info!("SqlServer::execute_sql: Received SQL: {}", req.sql);
         
         // Parse the SQL
         let ast = match Parser::parse(&req.sql) {
-            Ok(ast) => ast,
+            Ok(ast) => {
+                info!("SqlServer::execute_sql: parse OK");
+                ast
+            }
             Err(e) => {
                 error!("SQL parse error: {e}");
                 return Ok(Response::new(SqlResponse {
@@ -302,10 +306,13 @@ impl SqlService for SqlServer {
         // Check if this node is the leader
         let is_leader = {
             let node = self.node.lock().await;
-            node.is_leader()
+            let is_leader = node.is_leader();
+            debug!("SqlServer::execute_sql: is_leader={}", is_leader);
+            is_leader
         };
         
         if !is_leader {
+            info!("SqlServer::execute_sql: Not the leader, returning error");
             return Ok(Response::new(SqlResponse {
                 success: false,
                 error: "Not the leader".to_string(),
@@ -320,8 +327,13 @@ impl SqlService for SqlServer {
         
         {
             let mut node = self.node.lock().await;
+            info!("SqlServer::execute_sql: submitting command to Raft");
             node.submit_command(command)
-                .map_err(|e| Status::internal(format!("Raft error: {e}")))?;
+                .map_err(|e| {
+                    error!("SqlServer::execute_sql: Raft submit_command error: {e}");
+                    Status::internal(format!("Raft error: {e}"))
+                })?;
+            debug!("SqlServer::execute_sql: Raft submit_command OK");
         }
         
         // For now, we'll just execute the command directly
@@ -329,8 +341,13 @@ impl SqlService for SqlServer {
         
         // Use tokio Mutex for async-safe locking
         let mut executor = self.executor.lock().await;
+        info!("SqlServer::execute_sql: calling Executor::execute");
         let result = executor.execute(ast).await
-            .map_err(|e| Status::internal(format!("Execution error: {e}")))?;
+            .map_err(|e| {
+                error!("SqlServer::execute_sql: Executor::execute error: {e}");
+                Status::internal(format!("Execution error: {e}"))
+            })?;
+        info!("SqlServer::execute_sql: Executor::execute done");
         
         // Convert the result to the response format
         let mut response = SqlResponse {
@@ -369,6 +386,7 @@ impl SqlService for SqlServer {
             response.rows.push(proto_row);
         }
         
+        info!("SqlServer::execute_sql: returning SqlResponse (success={})", response.success);
         Ok(Response::new(response))
     }
 }

@@ -137,11 +137,10 @@ impl SqlClient {
     
     pub async fn connect(&mut self) -> Result<(), NetworkError> {
         let endpoint = Endpoint::from_shared(format!("http://{}", self.address))
-            .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+            .map_err(|e| NetworkError::ConnectionError(e.to_string()))?
+            .connect_timeout(Duration::from_secs(5));
         
         let channel = endpoint
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(5))
             .connect()
             .await?;
         

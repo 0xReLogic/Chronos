@@ -223,14 +223,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             
-            // Create data directory if it doesn't exist
+            // Create cluster data directory if it doesn't exist
             let data_path = Path::new(&data_dir);
             if !data_path.exists() {
                 std::fs::create_dir_all(data_path)?;
             }
+
+            // Create data directory for this node
+            std::fs::create_dir_all(&node_data_dir)?;
             
-            // Configure Raft
-            let mut config = RaftConfig::new(&id, &data_dir);
+            // Configure Raft for this node (including peers)
+            let mut config = RaftConfig::new(&id, &node_data_dir);
             
             // Add peers
             if let Some(peers_str) = peers {
@@ -248,19 +251,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             
-            // Create data directory for this node
-            let node_data_dir = format!("{data_dir}/{id}");
-            std::fs::create_dir_all(&node_data_dir)?;
-            
             // Create executor
             let executor = Arc::new(Mutex::new(Executor::new(&node_data_dir).await));
             
             // Shared sync status (used by SyncWorker and gRPC)
             let sync_status: SharedSyncStatus = Arc::new(Mutex::new(SyncStatusState::default()));
             
-            // Start Raft
-            let raft_config = RaftConfig::new(&id, &node_data_dir);
-            let raft = Raft::new(raft_config);
+            // Start Raft with the configured peers and per-node data dir
+            let raft = Raft::new(config);
             let _node = Arc::clone(&raft.node);
             raft.start().await?;
             
@@ -307,19 +305,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .unwrap()
                             .as_secs();
 
-                        let mut exec = executor_clone.lock().await;
-                        match exec.cleanup_expired(now_secs, limit).await {
-                            Ok(cleaned) => {
-                                if cleaned > 0 {
-                                    log::info!(
-                                        "TTL cleanup removed {} expired rows (now_secs={})",
-                                        cleaned,
-                                        now_secs
-                                    );
+                        {
+                            // Restrict the lifetime of the executor lock to just the
+                            // cleanup_expired call so other tasks (like SQL handling)
+                            // are not blocked for the entire sleep interval.
+                            let mut exec = executor_clone.lock().await;
+                            match exec.cleanup_expired(now_secs, limit).await {
+                                Ok(cleaned) => {
+                                    if cleaned > 0 {
+                                        log::info!(
+                                            "TTL cleanup removed {} expired rows (now_secs={})",
+                                            cleaned,
+                                            now_secs
+                                        );
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                log::error!("TTL cleanup error: {}", e);
+                                Err(e) => {
+                                    log::error!("TTL cleanup error: {}", e);
+                                }
                             }
                         }
 
