@@ -27,6 +27,7 @@ pub struct PersistentOfflineQueue {
 
 impl PersistentOfflineQueue {
     const TREE_NAME: &'static str = "__offline_queue__";
+    const META_NEXT_ID_KEY: &'static [u8] = b"__next_id__";
 
     /// Open or create the offline queue for the given database.
     pub fn new(db: &sled::Db) -> Result<Self, StorageError> {
@@ -34,31 +35,59 @@ impl PersistentOfflineQueue {
             .open_tree(Self::TREE_NAME)
             .map_err(|e| StorageError::SledError(e.to_string()))?;
 
-        // Determine next_id by looking at the last key in the tree, if any.
-        let mut last_id: u64 = 0;
-        for item in tree.iter() {
-            let (key, _value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
-            if key.len() == 8 {
-                if let Ok(id_bytes) = key.as_ref().try_into() as Result<[u8; 8], _> {
-                    let id = u64::from_be_bytes(id_bytes);
-                    if id > last_id {
-                        last_id = id;
+        // Prefer a persisted next_id metadata entry if present, otherwise
+        // fall back to scanning existing numeric keys for backward
+        // compatibility.
+        let mut next_id: u64 = 0;
+
+        if let Ok(Some(bytes)) = tree.get(Self::META_NEXT_ID_KEY) {
+            if bytes.len() == 8 {
+                if let Ok(arr) = bytes.as_ref().try_into() as Result<[u8; 8], _> {
+                    next_id = u64::from_be_bytes(arr);
+                }
+            }
+        } else {
+            // Legacy initialization path: determine next_id by looking at the
+            // last numeric key in the tree, if any.
+            let mut last_id: u64 = 0;
+            for item in tree.iter() {
+                let (key, _value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+                if key.len() == 8 {
+                    if let Ok(id_bytes) = key.as_ref().try_into() as Result<[u8; 8], _> {
+                        let id = u64::from_be_bytes(id_bytes);
+                        if id > last_id {
+                            last_id = id;
+                        }
                     }
                 }
             }
+            next_id = last_id;
         }
 
-        Ok(Self { tree, next_id: last_id })
+        Ok(Self { tree, next_id })
     }
 
     /// Current length of the queue (number of enqueued items).
     pub fn len(&self) -> Result<usize, StorageError> {
-        Ok(self.tree.len())
+        let mut count: usize = 0;
+        for item in self.tree.iter() {
+            let (key, _value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            if key.len() == 8 {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// Returns true if the queue is empty.
     pub fn is_empty(&self) -> Result<bool, StorageError> {
-        Ok(self.tree.is_empty())
+        for item in self.tree.iter() {
+            let (key, _value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+            if key.len() == 8 {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Enqueue a new operation with its timestamp. Returns the assigned ID.
@@ -83,6 +112,12 @@ impl PersistentOfflineQueue {
             .insert(id.to_be_bytes(), bytes)
             .map_err(|e| StorageError::SledError(e.to_string()))?;
 
+        // Persist the updated next_id metadata so IDs never reset even if the
+        // queue is temporarily empty.
+        self.tree
+            .insert(Self::META_NEXT_ID_KEY, &id.to_be_bytes())
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
         Ok(id)
     }
 
@@ -97,6 +132,12 @@ impl PersistentOfflineQueue {
             }
 
             let (key, value) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
+
+            // Skip metadata entries such as the next_id marker; only keys
+            // that are exactly 8 bytes long are real queued operations.
+            if key.len() != 8 {
+                continue;
+            }
 
             let (entry, _): (PersistentQueuedOperation, usize) =
                 bincode::serde::decode_from_slice(&value, bincode::config::standard())

@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use crate::parser::{Ast, Statement, Value, ColumnDefinition, DataType as ParserDataType, Condition, Operator, TtlSpec};
 use crate::storage::{create_storage_engine, StorageEngine, StorageConfig, TableSchema, Column, DataType, Row, Filter, FilterOp};
 use crate::storage::offline_queue::PersistentQueuedOperation;
+use crate::common::timestamp::HybridTimestamp;
 
 pub use self::error::ExecutorError;
 
@@ -662,6 +663,29 @@ impl Executor {
     pub async fn cleanup_expired(&mut self, now_secs: u64, limit: usize) -> Result<u64, ExecutorError> {
         self.storage
             .cleanup_expired(now_secs, limit)
+            .await
+            .map_err(|e| ExecutorError::StorageError(e.to_string()))
+    }
+
+    pub async fn get_lww_timestamp(
+        &self,
+        table: &str,
+        key: &[u8],
+    ) -> Result<Option<HybridTimestamp>, ExecutorError> {
+        self.storage
+            .get_lww_ts(table, key)
+            .await
+            .map_err(|e| ExecutorError::StorageError(e.to_string()))
+    }
+
+    pub async fn set_lww_timestamp(
+        &mut self,
+        table: &str,
+        key: &[u8],
+        ts: HybridTimestamp,
+    ) -> Result<(), ExecutorError> {
+        self.storage
+            .set_lww_ts(table, key, ts)
             .await
             .map_err(|e| ExecutorError::StorageError(e.to_string()))
     }

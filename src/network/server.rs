@@ -14,12 +14,22 @@ use crate::network::proto::sync_service_server::SyncService;
 use crate::network::proto::sync_status_service_server::SyncStatusService;
 use crate::common::timestamp::HybridTimestamp;
 use crate::storage::wal::Operation as WalOperation;
+use crate::storage::StorageError as StorageError;
+use uhlc::HLC;
 
 use super::proto::*;
 use crate::network::ConnectivityState;
 use crate::network::sync_status::SharedSyncStatus;
 
 type LwwStateMap = HashMap<(String, Vec<u8>), HybridTimestamp>;
+
+#[derive(Default, Debug)]
+struct SyncStats {
+    /// Total number of operations successfully applied via SyncServer.
+    total_applied: u64,
+    /// Total number of operations skipped due to LWW (stale timestamps).
+    total_skipped_lww: u64,
+}
 
 
 pub struct RaftServer {
@@ -181,6 +191,7 @@ impl HealthService for HealthServer {
 pub struct SyncServer {
     executor: Arc<Mutex<Executor>>,
     lww_state: Arc<Mutex<LwwStateMap>>,
+    stats: Arc<Mutex<SyncStats>>,
 }
 
 impl SyncServer {
@@ -188,7 +199,48 @@ impl SyncServer {
         Self {
             executor,
             lww_state: Arc::new(Mutex::new(HashMap::new())),
+            stats: Arc::new(Mutex::new(SyncStats::default())),
         }
+    }
+
+    /// Load the last applied sync ID for a given edge_id from the underlying
+    /// storage engine. This is implemented via a dedicated sled tree in
+    /// SledEngine; here we just delegate through the Executor.
+    async fn get_last_applied_id(
+        &self,
+        executor: &Executor,
+        edge_id: &str,
+    ) -> Result<u64, StorageError> {
+        // For now, we store the cursor in the same LWW timestamp tree using a
+        // reserved key prefix, keeping the complexity minimal. This can be
+        // refactored into a dedicated metadata tree if needed.
+        // We use an empty key and interpret the HybridTimestamp node_id
+        // field as the last applied ID.
+        if let Some(ts) = executor
+            .get_lww_timestamp(edge_id, &[])
+            .await
+            .map_err(|e| StorageError::SledError(e.to_string()))?
+        {
+            Ok(ts.node_id)
+        } else {
+            Ok(0)
+        }
+    }
+
+    async fn set_last_applied_id(
+        &self,
+        executor: &mut Executor,
+        edge_id: &str,
+        id: u64,
+    ) -> Result<(), StorageError> {
+        let ts = HybridTimestamp {
+            ts: HLC::default().new_timestamp(),
+            node_id: id,
+        };
+        executor
+            .set_lww_timestamp(edge_id, &[], ts)
+            .await
+            .map_err(|e| StorageError::SledError(e.to_string()))
     }
 }
 
@@ -200,11 +252,33 @@ impl SyncService for SyncServer {
     ) -> Result<Response<SyncResponse>, Status> {
         let req = request.into_inner();
         let mut applied: u64 = 0;
+        let mut skipped_lww: u64 = 0;
 
         let mut executor = self.executor.lock().await;
         let mut lww = self.lww_state.lock().await;
 
+        // Determine the last applied ID for this edge (delta sync cursor).
+        let edge_id = req.edge_id.clone();
+        let mut max_seen_id: u64 = 0;
+        let last_applied_id = match self.get_last_applied_id(&executor, &edge_id).await {
+            Ok(id) => id,
+            Err(e) => {
+                error!("Failed to get last_applied_id for edge {}: {}", edge_id, e);
+                0
+            }
+        };
+
         for op in req.operations {
+            // Skip operations whose IDs are already at or below the cursor
+            // for this edge. This avoids re-processing old batches after
+            // restarts.
+            if op.id <= last_applied_id {
+                continue;
+            }
+
+            if op.id > max_seen_id {
+                max_seen_id = op.id;
+            }
             let data = op.data;
             let decoded: Result<
                 (
@@ -222,20 +296,50 @@ impl SyncService for SyncServer {
                         WalOperation::Update { table, key, .. } => (table.clone(), key.clone()),
                         WalOperation::Delete { table, key } => (table.clone(), key.clone()),
                     };
-                    let map_key = (table, key_bytes);
+                    let map_key = (table.clone(), key_bytes.clone());
 
-                    // Last-Write-Wins: skip if we have a newer or equal timestamp
+                    // Last-Write-Wins: consult in-memory cache first, then
+                    // persisted LWW metadata if needed. Skip if we have a
+                    // newer or equal timestamp.
                     let ts = entry.timestamp;
-                    let should_apply = match lww.get(&map_key) {
-                        Some(prev_ts) if *prev_ts >= ts => {
+
+                    let prev_ts = match lww.get(&map_key) {
+                        Some(prev) => Some(*prev),
+                        None => match executor
+                            .get_lww_timestamp(&table, &key_bytes)
+                            .await
+                        {
+                            Ok(opt_ts) => {
+                                if let Some(persisted) = opt_ts {
+                                    lww.insert(map_key.clone(), persisted);
+                                    Some(persisted)
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "LWW get_lww_timestamp error for table={} id={}: {}",
+                                    table,
+                                    entry.id,
+                                    e
+                                );
+                                None
+                            }
+                        },
+                    };
+
+                    let should_apply = match prev_ts {
+                        Some(prev_ts) if prev_ts >= ts => {
                             info!(
                                 "Skipping stale synced operation id={} due to LWW (prev_ts >= new_ts)",
                                 entry.id
                             );
+                            skipped_lww += 1;
                             false
                         }
                         _ => {
-                            lww.insert(map_key, ts);
+                            lww.insert(map_key.clone(), ts);
                             true
                         }
                     };
@@ -251,6 +355,20 @@ impl SyncService for SyncServer {
                         error!("Failed to apply synced operation id={}: {}", entry.id, e);
                         continue;
                     }
+                    // Best-effort persist of the new LWW timestamp; if it
+                    // fails we still keep the in-memory view and applied
+                    // data, and will recompute on next sync.
+                    if let Err(e) = executor
+                        .set_lww_timestamp(&table, &key_bytes, ts)
+                        .await
+                    {
+                        error!(
+                            "Failed to persist LWW timestamp for table={} id={}: {}",
+                            table,
+                            entry.id,
+                            e
+                        );
+                    }
                     applied += 1;
                 }
                 Err(e) => {
@@ -259,7 +377,33 @@ impl SyncService for SyncServer {
             }
         }
 
-        info!("SyncServer applied {} operations from edge", applied);
+        {
+            let mut stats = self.stats.lock().await;
+            stats.total_applied = stats.total_applied.saturating_add(applied);
+            stats.total_skipped_lww = stats.total_skipped_lww.saturating_add(skipped_lww);
+            info!(
+                "SyncServer applied {} operations from edge (skipped_lww={}, total_applied={}, total_skipped_lww={})",
+                applied,
+                skipped_lww,
+                stats.total_applied,
+                stats.total_skipped_lww,
+            );
+        }
+
+        // Update the per-edge cursor if we observed any new IDs.
+        if max_seen_id > last_applied_id {
+            if let Err(e) = self
+                .set_last_applied_id(&mut executor, &edge_id, max_seen_id)
+                .await
+            {
+                error!(
+                    "Failed to persist last_applied_id for edge {} to {}: {}",
+                    edge_id,
+                    max_seen_id,
+                    e
+                );
+            }
+        }
 
         Ok(Response::new(SyncResponse { applied }))
     }

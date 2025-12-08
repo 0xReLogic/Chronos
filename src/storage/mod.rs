@@ -10,6 +10,7 @@ use crate::parser::Value;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::common::timestamp::HybridTimestamp;
 use crate::storage::offline_queue::PersistentQueuedOperation;
 use crate::storage::wal::Operation;
 
@@ -68,6 +69,29 @@ pub trait StorageEngine: Send + Sync {
     /// Requeue operations back into the offline queue. Default implementation
     /// is a no-op for engines without offline queue support.
     async fn requeue_offline_ops(&self, _ops: Vec<PersistentQueuedOperation>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Get the last-seen HybridTimestamp for a given logical key (table, key)
+    /// used by the edge->cloud sync LWW conflict resolution. Default
+    /// implementation returns None for engines that do not support it.
+    async fn get_lww_ts(
+        &self,
+        _table: &str,
+        _key: &[u8],
+    ) -> Result<Option<HybridTimestamp>> {
+        Ok(None)
+    }
+
+    /// Persist the last-seen HybridTimestamp for a given logical key
+    /// (table, key) used by the edge->cloud sync LWW conflict resolution.
+    /// Default implementation is a no-op for engines that do not support it.
+    async fn set_lww_ts(
+        &mut self,
+        _table: &str,
+        _key: &[u8],
+        _ts: HybridTimestamp,
+    ) -> Result<()> {
         Ok(())
     }
 }

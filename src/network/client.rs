@@ -198,6 +198,7 @@ impl SyncClient {
 
     pub async fn sync_operations(
         &mut self,
+        edge_id: &str,
         operations: Vec<crate::storage::offline_queue::PersistentQueuedOperation>,
     ) -> Result<u64, NetworkError> {
         if self.client.is_none() {
@@ -216,7 +217,7 @@ impl SyncClient {
             })
             .collect();
 
-        let request = SyncRequest { operations: ops };
+        let request = SyncRequest { edge_id: edge_id.to_string(), operations: ops };
 
         let response: SyncResponse = self
             .client

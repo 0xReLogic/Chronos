@@ -54,6 +54,7 @@ graph TD
 - **Offline-First for Edge:** HLC timestamps, WAL + recovery, and offline queues (client + persistent storage) are designed for intermittent networks in IoT deployments.
 - **Edge-Optimized Storage:** Secondary indexes on Sled, transparent row-level LZ4 compression, and an in-memory LRU row cache on indexed query paths.
 - **Data Retention with TTL:** Per-table TTL (e.g. `CREATE TABLE sensors (id INT, temp FLOAT) WITH TTL=7d;`) with a background cleanup worker at a configurable interval (default 3600s) in node mode.
+ - **Edge→Cloud Sync & Conflict Handling:** Persistent offline queue on edge nodes, batched sync via `SyncWorker`, per-`(table, key)` `HybridTimestamp` metadata stored in sled for Last-Write-Wins decisions that survive cloud restarts, and ID-based per-edge cursors so old batches are not re-applied after reconnect.
 
 ---
 
@@ -198,7 +199,7 @@ cargo run --release -- node \
 
 ```bash
 cargo run --release -- node \
-  --id edge \
+  --id edge1 \
   --data-dir data \
   --address 127.0.0.1:8001 \
   --clean \
@@ -231,6 +232,23 @@ cargo run --release -- client --leader 127.0.0.1:8000 --data-dir data
 ```sql
 chronos> SELECT * FROM sensors;
 ```
+### Edge Deployment Patterns
+
+- **Small deployments (farms / livestock / small manufacturing):**
+  - Sensors (ESP32, PLCs, etc.) → 1 edge gateway (Chronos node, e.g. STB / Raspberry Pi / old PC) → 1 cloud Chronos node.
+  - 1–3 edge nodes per site are usually enough for hundreds of sensors with light–medium load.
+  - Use per-table TTL to keep edge data size small.
+
+- **Medium deployments (many edges per cloud):**
+  - Several edge nodes (1–10) across multiple sites → 1–3 cloud Chronos nodes per region.
+  - Each edge uses a unique `--id` (e.g. `farm-a-edge1`, `factory-1-gw`) so `edge_id` + per-edge cursor in the cloud stay unambiguous.
+  - A safe starting point: hundreds to a few thousand write operations per second per cloud node, with `--sync-batch-size` around 100–1000 operations.
+
+Behind the scenes:
+
+- Edge writes are appended to a persistent offline queue (`__offline_queue__`) with monotonically increasing IDs.
+- A background `SyncWorker` periodically drains this queue and sends `SyncRequest { edge_id, operations }` batches to the cloud.
+- The cloud `SyncServer` uses per-`(table, key)` `HybridTimestamp` metadata (stored in sled) for LWW conflict resolution and tracks a per-edge `last_applied_id` cursor to avoid re-applying old batches after restarts.
 
 ---
 
@@ -316,7 +334,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
----
 
 ## Performance Benchmarks
 

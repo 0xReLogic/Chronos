@@ -16,6 +16,7 @@ pub struct SyncWorker {
     interval: Duration,
     batch_size: usize,
     status: SharedSyncStatus,
+    edge_id: String,
 }
 
 impl SyncWorker {
@@ -25,6 +26,7 @@ impl SyncWorker {
         interval: Duration,
         batch_size: usize,
         status: SharedSyncStatus,
+        edge_id: String,
     ) -> Self {
         Self {
             executor,
@@ -32,6 +34,7 @@ impl SyncWorker {
             interval,
             batch_size,
             status,
+            edge_id,
         }
     }
 
@@ -63,7 +66,7 @@ impl SyncWorker {
 
         let mut client = SyncClient::new(&self.target);
 
-        match client.sync_operations(drained.clone()).await {
+        match client.sync_operations(&self.edge_id, drained.clone()).await {
             Ok(applied) => {
                 {
                     let mut status = self.status.lock().await;

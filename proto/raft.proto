@@ -101,7 +101,8 @@ message SyncOperation {
 }
 
 message SyncRequest {
-  repeated SyncOperation operations = 1;
+  string edge_id = 1;
+  repeated SyncOperation operations = 2;
 }
 
 message SyncResponse {

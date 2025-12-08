@@ -286,6 +286,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::time::Duration::from_secs(sync_interval_secs),
                     sync_batch_size,
                     Arc::clone(&sync_status),
+                    id.clone(),
                 );
                 tokio::spawn(worker.run());
             }

@@ -15,11 +15,13 @@ use std::path::PathBuf;
 use tokio::sync::Mutex as TokioMutex;
 use lru::LruCache;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
+use crate::common::timestamp::HybridTimestamp;
 
 const SCHEMA_TREE: &str = "__schemas__";
 const INDEX_META_TREE: &str = "__indexes__";
 #[allow(dead_code)]
 const TTL_TREE: &str = "__ttl__";
+const LWW_TS_TREE: &str = "__lww_ts__";
 
 pub struct SledEngine {
     db: sled::Db,
@@ -79,6 +81,12 @@ impl SledEngine {
     fn ttl_tree(&self) -> Result<sled::Tree> {
         self.db
             .open_tree(TTL_TREE)
+            .map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+
+    fn lww_ts_tree(&self) -> Result<sled::Tree> {
+        self.db
+            .open_tree(LWW_TS_TREE)
             .map_err(|e| StorageError::SledError(e.to_string()).into())
     }
     
@@ -677,6 +685,41 @@ impl StorageEngine for SledEngine {
         self.db
             .flush_async()
             .await
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn get_lww_ts(&self, table: &str, key: &[u8]) -> Result<Option<HybridTimestamp>> {
+        let tree = self.lww_ts_tree()?;
+        let mut composite = Vec::with_capacity(table.len() + 1 + key.len());
+        composite.extend_from_slice(table.as_bytes());
+        composite.push(0);
+        composite.extend_from_slice(key);
+
+        match tree.get(&composite) {
+            Ok(Some(value)) => {
+                let (ts, _): (HybridTimestamp, usize) =
+                    bincode::serde::decode_from_slice(&value, bincode::config::standard())
+                        .map_err(|e| StorageError::SledError(e.to_string()))?;
+                Ok(Some(ts))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(StorageError::SledError(e.to_string()).into()),
+        }
+    }
+
+    async fn set_lww_ts(&mut self, table: &str, key: &[u8], ts: HybridTimestamp) -> Result<()> {
+        let tree = self.lww_ts_tree()?;
+        let mut composite = Vec::with_capacity(table.len() + 1 + key.len());
+        composite.extend_from_slice(table.as_bytes());
+        composite.push(0);
+        composite.extend_from_slice(key);
+
+        let bytes = bincode::serde::encode_to_vec(ts, bincode::config::standard())
+            .map_err(|e| StorageError::SledError(e.to_string()))?;
+
+        tree.insert(composite, bytes)
             .map_err(|e| StorageError::SledError(e.to_string()))?;
 
         Ok(())
