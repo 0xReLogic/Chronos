@@ -31,10 +31,14 @@ thiserror = "1.0"
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json", "time"] }
+tracing-log = "0.2"
 bincode = { version = "2.0.1", features = ["serde"] }
 uhlc = "0.8.2"
 tokio = { version = "1.47.0", features = ["full"] }
 rand = "0.9.2"
+hyper = { version = "0.14", features = ["server", "http1"] }
 
 # Phase 2 dependencies
 tonic = "0.10"

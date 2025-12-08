@@ -60,10 +60,9 @@ graph TD
 
 ## Logging
 
-Chronos uses the standard `log`/`env_logger` stack:
+Chronos uses `tracing` + `tracing-subscriber` under the hood, with a bridge from the standard `log` macros and optional rotating file logging via `env_logger`:
 
-- Default log level is **WARN**, which keeps edge deployments quiet by default.
-- You can override this with `RUST_LOG`, for example:
+- Default log level is **INFO**, and can be overridden with `RUST_LOG`, for example:
 
   ```bash
   # Enable info logs for Chronos only
@@ -82,7 +81,34 @@ Chronos uses the standard `log`/`env_logger` stack:
   cargo run --release -- node ...
   ```
 
-This allows you to keep production nodes quiet while still enabling detailed diagnostics when needed.
+This allows you to keep production nodes quiet while still enabling structured, timestamped logs for debugging and observability.
+
+---
+
+## Monitoring & Health
+
+Each node exposes a small HTTP admin endpoint on `gRPC_port + 1000`.
+
+- If the gRPC SQL/Raft server listens on `127.0.0.1:8000`, the admin HTTP endpoints are on `127.0.0.1:9000`.
+
+Available paths:
+
+- `/metrics` – Prometheus-style metrics, for example:
+  - `chronos_sql_requests_total{kind="read"}`
+  - `chronos_sql_requests_total{kind="write"}`
+  - `chronos_raft_term`
+  - `chronos_raft_role` (0=follower, 1=candidate, 2=leader)
+  - `chronos_storage_size_bytes`
+
+  These can be scraped directly by Prometheus and visualized in Grafana.
+
+- `/health` – simple JSON health status, e.g.:
+
+  ```json
+  {"status":"ok","role":"Leader","term":2}
+  ```
+
+  This is suitable for load balancer or Kubernetes liveness/readiness checks.
 
 ---
 
@@ -334,6 +360,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+## Testing
+
+- Run the full test suite:
+
+  ```bash
+  cargo test
+  ```
+
+- Run the 3-node Raft cluster integration tests:
+
+  ```bash
+  cargo test --test raft_cluster
+  ```
+
+- Run the Raft log property-based tests:
+
+  ```bash
+  cargo test --test raft_log_proptest
+  ```
+
+The test suite includes multi-node Raft cluster scenarios (leader failover, follower restart, isolated minority node rejecting writes) and property-based checks for Raft log append/truncate invariants.
 
 ## Performance Benchmarks
 

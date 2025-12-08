@@ -10,8 +10,9 @@ use tokio::time::sleep;
 
 use chronos::Executor;
 use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
-use env_logger::{Env, Target};
 use log::{info, error};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_log::LogTracer;
 
 use chronos::repl::Repl;
 
@@ -23,6 +24,45 @@ struct RotatingFile {
     max_files: u32,
     file: File,
     current_size: u64,
+}
+
+fn init_logging() {
+    let _ = LogTracer::init();
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+
+    let fmt_layer = fmt::layer().with_target(true).with_timer(fmt::time::UtcTime::rfc_3339());
+
+    if std::env::var("CHRONOS_LOG_FILE").is_ok() {
+        // When CHRONOS_LOG_FILE is set, we keep using env_logger + RotatingFile
+        // to write plain logs to disk, while tracing collects structured logs
+        // to stderr by default.
+        let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+
+        if let Ok(path) = std::env::var("CHRONOS_LOG_FILE") {
+            let max_size_mb = std::env::var("CHRONOS_LOG_MAX_SIZE_MB")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(10);
+            let max_files = std::env::var("CHRONOS_LOG_MAX_FILES")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(3);
+
+            if let Ok(rot) = RotatingFile::new(path.clone(), max_size_mb * 1024 * 1024, max_files) {
+                builder.target(env_logger::Target::Pipe(Box::new(rot)));
+            }
+        }
+
+        builder.init();
+    }
+
+    let _ = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .try_init();
 }
 
 impl RotatingFile {
@@ -147,30 +187,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logger (default to WARN; override with RUST_LOG if needed)
-    let mut builder = env_logger::Builder::from_env(Env::default().default_filter_or("warn"));
-
-    if let Ok(path) = std::env::var("CHRONOS_LOG_FILE") {
-        let max_size_mb = std::env::var("CHRONOS_LOG_MAX_SIZE_MB")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(10);
-        let max_files = std::env::var("CHRONOS_LOG_MAX_FILES")
-            .ok()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(3);
-
-        match RotatingFile::new(path.clone(), max_size_mb * 1024 * 1024, max_files) {
-            Ok(rot) => {
-                builder.target(Target::Pipe(Box::new(rot)));
-            }
-            Err(e) => {
-                eprintln!("Failed to initialize rotating log file {}: {}. Falling back to stderr.", path, e);
-            }
-        }
-    }
-
-    builder.init();
+    init_logging();
     
     // Parse command line arguments
     let cli = Cli::parse();
@@ -352,6 +369,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         sleep(Duration::from_secs(ttl_cleanup_interval_secs)).await;
+                    }
+                });
+            }
+
+            let http_addr = {
+                let mut s: std::net::SocketAddr = addr;
+                let port = s.port().saturating_add(1000);
+                s.set_port(port);
+                s
+            };
+
+            {
+                let http_node = Arc::clone(&raft.node);
+                let http_data_dir = node_data_dir.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = chronos::network::http_admin::run_http_admin(http_addr, http_node, http_data_dir).await {
+                        eprintln!("HTTP admin server error: {}", e);
                     }
                 });
             }

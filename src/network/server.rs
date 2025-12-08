@@ -19,6 +19,7 @@ use uhlc::HLC;
 
 use super::proto::*;
 use crate::network::ConnectivityState;
+use crate::network::metrics;
 use crate::network::sync_status::SharedSyncStatus;
 
 type LwwStateMap = HashMap<(String, Vec<u8>), HybridTimestamp>;
@@ -429,6 +430,11 @@ impl SqlService for SqlServer {
         info!("SqlServer::execute_sql: ENTER");
         let req = request.into_inner();
         info!("SqlServer::execute_sql: Received SQL: {}", req.sql);
+        let is_read_query = req
+            .sql
+            .trim_start()
+            .to_uppercase()
+            .starts_with("SELECT");
         
         // Parse the SQL
         let ast = match Parser::parse(&req.sql) {
@@ -512,6 +518,9 @@ impl SqlService for SqlServer {
             response.rows.push(proto_row);
         }
         
+        if response.success {
+            metrics::record_sql(is_read_query);
+        }
         info!("SqlServer::execute_sql: returning SqlResponse (success={})", response.success);
         Ok(Response::new(response))
     }

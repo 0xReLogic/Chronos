@@ -36,6 +36,8 @@ pub mod connectivity;
 pub mod offline_queue;
 pub mod sync_worker;
 pub mod sync_status;
+pub mod metrics;
+pub mod http_admin;
 
 pub use connectivity::*;
 pub use offline_queue::*;
