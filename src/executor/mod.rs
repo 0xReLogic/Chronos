@@ -344,8 +344,17 @@ impl Executor {
         // Deserialize the command
         let (ast, _): (Ast, usize) = bincode::decode_from_slice(command, bincode::config::standard())
             .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {e}")))?;
-        
-        // Execute the command
+        if let Ast::Statement(Statement::CreateTable { table_name, .. }) = &ast {
+            let schema_exists = self
+                .storage
+                .get_schema(table_name)
+                .await
+                .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+            if schema_exists.is_some() {
+                return Ok(());
+            }
+        }
+
         match ast {
             Ast::Statement(stmt) => {
                 self.execute_statement(stmt).await?;

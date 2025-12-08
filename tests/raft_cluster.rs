@@ -90,8 +90,8 @@ async fn three_node_cluster_write_and_failover_persists_data() {
 
     // Pick a random base port in a high range to reduce the chance of
     // collisions with other processes or previous test runs.
-    let mut rng = rand::thread_rng();
-    let base: u16 = 20000 + (rng.gen_range(0u16..1000) * 3);
+    let mut rng = rand::rng();
+    let base: u16 = 20000 + (rng.random_range(0u16..1000) * 3);
     let port1: u16 = base;
     let port2: u16 = base + 1;
     let port3: u16 = base + 2;
@@ -103,7 +103,7 @@ async fn three_node_cluster_write_and_failover_persists_data() {
     // Give the cluster time to elect a leader and start serving gRPC.
     sleep(Duration::from_secs(3)).await;
 
-    let addrs = vec![
+    let addrs = [
         format!("127.0.0.1:{}", port1),
         format!("127.0.0.1:{}", port2),
         format!("127.0.0.1:{}", port3),
@@ -127,6 +127,16 @@ async fn three_node_cluster_write_and_failover_persists_data() {
         .execute_sql("INSERT INTO sensors (id, temperature) VALUES (2, 20.0);")
         .await
         .expect("insert 2");
+
+    let pre_failover_resp = leader_client
+        .execute_sql("SELECT id, temperature FROM sensors;")
+        .await
+        .expect("select before failover");
+    println!(
+        "debug: leader {} rows before failover: {}",
+        leader_addr,
+        pre_failover_resp.rows.len()
+    );
 
     // Kill the leader process to force a failover.
     if is_addr_for_port(&leader_addr, port1) {
@@ -160,9 +170,28 @@ async fn three_node_cluster_write_and_failover_persists_data() {
         .await
         .expect("select after failover");
 
+    for addr in &remaining {
+        let mut client = SqlClient::new(addr);
+        if let Err(e) = client.connect().await {
+            println!("debug: connect to {} failed: {}", addr, e);
+            continue;
+        }
+        match client
+            .execute_sql("SELECT id, temperature FROM sensors;")
+            .await
+        {
+            Ok(r) => {
+                println!("debug: node {} rows after failover: {}", addr, r.rows.len());
+            }
+            Err(e) => {
+                println!("debug: select on {} failed: {}", addr, e);
+            }
+        }
+    }
+
     assert!(
         resp.success,
-        "SELECT failed on new leader: success=false, error={}",
+        "SELECT failed on new leader: success=false, error= {}",
         resp.error
     );
     assert!(
@@ -172,6 +201,206 @@ async fn three_node_cluster_write_and_failover_persists_data() {
     );
 
     // Best-effort cleanup: kill any remaining nodes.
+    let _ = node1.kill();
+    let _ = node2.kill();
+    let _ = node3.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn three_node_cluster_isolated_node_rejects_writes() {
+    let tmp = TempDir::new().expect("tempdir");
+    let data_dir = tmp.path().join("cluster");
+    let data_dir_str = data_dir
+        .to_str()
+        .expect("data dir path should be valid UTF-8");
+
+    let mut rng = rand::rng();
+    let base: u16 = 22000 + (rng.random_range(0u16..1000) * 3);
+    let port1: u16 = base;
+    let port2: u16 = base + 1;
+    let port3: u16 = base + 2;
+
+    let mut node1 = start_node("node1", port1, &[("node2", port2), ("node3", port3)], data_dir_str).await;
+    let mut node2 = start_node("node2", port2, &[("node1", port1), ("node3", port3)], data_dir_str).await;
+    let mut node3 = start_node("node3", port3, &[("node1", port1), ("node2", port2)], data_dir_str).await;
+
+    sleep(Duration::from_secs(3)).await;
+
+    let addrs = [
+        format!("127.0.0.1:{}", port1),
+        format!("127.0.0.1:{}", port2),
+        format!("127.0.0.1:{}", port3),
+    ];
+    let addr_slices: Vec<&str> = addrs.iter().map(|s| s.as_str()).collect();
+
+    let leader_addr = find_leader(&addr_slices).await;
+
+    let mut others: Vec<&str> = addr_slices.iter().copied().filter(|a| *a != leader_addr).collect();
+    others.sort();
+    let isolated_addr = others[0];
+    let killed_addr = others[1];
+
+    if is_addr_for_port(&leader_addr, port1) {
+        let _ = node1.kill();
+    } else if is_addr_for_port(&leader_addr, port2) {
+        let _ = node2.kill();
+    } else {
+        let _ = node3.kill();
+    }
+
+    if is_addr_for_port(killed_addr, port1) {
+        let _ = node1.kill();
+    } else if is_addr_for_port(killed_addr, port2) {
+        let _ = node2.kill();
+    } else {
+        let _ = node3.kill();
+    }
+
+    sleep(Duration::from_secs(3)).await;
+
+    let mut client = SqlClient::new(isolated_addr);
+    client
+        .connect()
+        .await
+        .expect("isolated SqlClient connect");
+
+    let resp = client
+        .execute_sql("INSERT INTO sensors (id, temperature) VALUES (99, 99.0);")
+        .await
+        .expect("insert on isolated node");
+
+    assert!(
+        !resp.success,
+        "expected write on isolated node to fail, but success=true"
+    );
+    assert!(
+        resp.error.to_lowercase().contains("not the leader"),
+        "expected Not the leader error on isolated node, got: {}",
+        resp.error
+    );
+
+    let _ = node1.kill();
+    let _ = node2.kill();
+    let _ = node3.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn three_node_cluster_follower_restart_preserves_writes() {
+    let tmp = TempDir::new().expect("tempdir");
+    let data_dir = tmp.path().join("cluster");
+    let data_dir_str = data_dir
+        .to_str()
+        .expect("data dir path should be valid UTF-8");
+
+    let mut rng = rand::rng();
+    let base: u16 = 21000 + (rng.random_range(0u16..1000) * 3);
+    let port1: u16 = base;
+    let port2: u16 = base + 1;
+    let port3: u16 = base + 2;
+
+    let mut node1 = start_node("node1", port1, &[("node2", port2), ("node3", port3)], data_dir_str).await;
+    let mut node2 = start_node("node2", port2, &[("node1", port1), ("node3", port3)], data_dir_str).await;
+    let mut node3 = start_node("node3", port3, &[("node1", port1), ("node2", port2)], data_dir_str).await;
+
+    sleep(Duration::from_secs(3)).await;
+
+    let addrs = [
+        format!("127.0.0.1:{}", port1),
+        format!("127.0.0.1:{}", port2),
+        format!("127.0.0.1:{}", port3),
+    ];
+    let addr_slices: Vec<&str> = addrs.iter().map(|s| s.as_str()).collect();
+
+    let leader_addr = find_leader(&addr_slices).await;
+
+    let mut leader_client = SqlClient::new(&leader_addr);
+    leader_client
+        .connect()
+        .await
+        .expect("leader SqlClient connect");
+
+    leader_client
+        .execute_sql("INSERT INTO sensors (id, temperature) VALUES (1, 10.0);")
+        .await
+        .expect("insert 1");
+    leader_client
+        .execute_sql("INSERT INTO sensors (id, temperature) VALUES (2, 20.0);")
+        .await
+        .expect("insert 2");
+
+    let (follower_id, follower_port) = if !is_addr_for_port(&leader_addr, port1) {
+        ("node1", port1)
+    } else if !is_addr_for_port(&leader_addr, port2) {
+        ("node2", port2)
+    } else {
+        ("node3", port3)
+    };
+
+    if follower_id == "node1" {
+        let _ = node1.kill();
+    } else if follower_id == "node2" {
+        let _ = node2.kill();
+    } else {
+        let _ = node3.kill();
+    }
+
+    sleep(Duration::from_secs(1)).await;
+
+    leader_client
+        .execute_sql("INSERT INTO sensors (id, temperature) VALUES (3, 30.0);")
+        .await
+        .expect("insert 3");
+    leader_client
+        .execute_sql("INSERT INTO sensors (id, temperature) VALUES (4, 40.0);")
+        .await
+        .expect("insert 4");
+    leader_client
+        .execute_sql("INSERT INTO sensors (id, temperature) VALUES (5, 50.0);")
+        .await
+        .expect("insert 5");
+
+    let restarted = if follower_id == "node1" {
+        start_node("node1", follower_port, &[("node2", port2), ("node3", port3)], data_dir_str).await
+    } else if follower_id == "node2" {
+        start_node("node2", follower_port, &[("node1", port1), ("node3", port3)], data_dir_str).await
+    } else {
+        start_node("node3", follower_port, &[("node1", port1), ("node2", port2)], data_dir_str).await
+    };
+
+    if follower_id == "node1" {
+        node1 = restarted;
+    } else if follower_id == "node2" {
+        node2 = restarted;
+    } else {
+        node3 = restarted;
+    }
+
+    sleep(Duration::from_secs(5)).await;
+
+    let new_leader_addr = find_leader(&addr_slices).await;
+
+    let mut client_after = SqlClient::new(&new_leader_addr);
+    client_after
+        .connect()
+        .await
+        .expect("new leader SqlClient connect");
+
+    let resp = client_after
+        .execute_sql("SELECT id, temperature FROM sensors;")
+        .await
+        .expect("select after follower restart");
+
+    assert!(
+        resp.success,
+        "SELECT failed on leader after follower restart: success=false, error={}",
+        resp.error
+    );
+    assert!(
+        resp.rows.len() >= 5,
+        "expected at least 5 rows after follower restart, got {}",
+        resp.rows.len()
+    );
+
     let _ = node1.kill();
     let _ = node2.kill();
     let _ = node3.kill();

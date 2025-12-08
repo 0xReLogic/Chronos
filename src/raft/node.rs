@@ -513,26 +513,16 @@ impl RaftNode {
             if let Some(entry) = self.log.get_entry(self.state.last_applied)? {
                 // Apply the command to the state machine
                 debug!("Applying log entry {} (term {})", self.state.last_applied, entry.term);
-                
-                // Forward the command to an external state machine (e.g. the
-                // SQL Executor) via an async channel. For now we only do this
-                // on non-leader nodes so that followers apply committed log
-                // entries to their local storage, while the leader continues
-                // to execute writes directly in the SQL path.
-                if !self.is_leader() {
-                    if let Some(tx) = &self.apply_sender {
-                        if let Err(e) = tx.send(entry.command.clone()) {
-                            error!(
-                                "Failed to forward committed command at index {}: {}",
-                                self.state.last_applied,
-                                e
-                            );
-                        }
+                if let Some(tx) = &self.apply_sender {
+                    if let Err(e) = tx.send(entry.command.clone()) {
+                        error!(
+                            "Failed to forward committed command at index {}: {}",
+                            self.state.last_applied,
+                            e
+                        );
                     }
                 }
 
-                // If we are the leader, notify any waiter that this index has
-                // been committed and applied locally.
                 if self.is_leader() {
                     if let Some(tx) = self.pending_commands.remove(&self.state.last_applied) {
                         let _ = tx.send(());

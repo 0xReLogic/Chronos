@@ -88,8 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         i += 1;
 
-        if batch_size > 0 && i % batch_size == 0 {
-            // simple progress marker
+        if i.is_multiple_of(batch_size) {
             println!("completed {} operations", i);
         }
     }
