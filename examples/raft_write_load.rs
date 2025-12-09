@@ -73,6 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let start = Instant::now();
     let mut i: u64 = 0;
+    let mut success: u64 = 0;
+    let mut errors: u64 = 0;
+    let mut not_leader_errors: u64 = 0;
+    let mut other_errors: u64 = 0;
 
     while i < ops {
         let sql = format!(
@@ -81,9 +85,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             20.0 + (i % 10) as f64
         );
 
-        let resp = client.execute_sql(&sql).await?;
-        if !resp.success {
-            eprintln!("INSERT error at op {}: {}", i, resp.error);
+        match client.execute_sql(&sql).await {
+            Ok(resp) => {
+                if resp.success {
+                    success += 1;
+                } else {
+                    eprintln!("INSERT error at op {}: {}", i, resp.error);
+                    errors += 1;
+                    if resp.error.contains("Not the leader") {
+                        not_leader_errors += 1;
+                    } else {
+                        other_errors += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("INSERT RPC error at op {}: {}", i, e);
+                errors += 1;
+                other_errors += 1;
+            }
         }
 
         i += 1;
@@ -99,8 +119,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let throughput = if secs > 0.0 { ops_f / secs } else { 0.0 };
 
     println!(
-        "Done: {} ops in {:.3} s (≈ {:.1} ops/s)",
-        ops, secs, throughput
+        "Done: {} ops in {:.3} s (≈ {:.1} ops/s), success={}, errors={}, not_leader_errors={}, other_errors={}",
+        ops, secs, throughput, success, errors, not_leader_errors, other_errors
     );
 
     Ok(())

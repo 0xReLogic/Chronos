@@ -345,9 +345,27 @@ impl Executor {
                         })?
                     };
 
-                    rx.await.map_err(|e| {
-                        ExecutorError::ExecutionError(format!("Raft commit wait error: {e}"))
-                    })?;
+                    let commit_res = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        rx,
+                    )
+                    .await;
+
+                    match commit_res {
+                        Ok(Ok(())) => {
+                            // committed and applied
+                        }
+                        Ok(Err(e)) => {
+                            return Err(ExecutorError::ExecutionError(format!(
+                                "Raft commit wait error: {e}",
+                            )));
+                        }
+                        Err(_elapsed) => {
+                            return Err(ExecutorError::ExecutionError(
+                                "Timeout waiting for Raft commit".to_string(),
+                            ));
+                        }
+                    }
 
                     // Once committed and applied via the Raft state machine,
                     // we can execute a read-only view if needed. For now,

@@ -102,6 +102,12 @@ impl RaftNode {
         elapsed > self.config.election_timeout_max
     }
 
+    fn abort_pending_commands(&mut self) {
+        // Dropping the senders will cause any awaiters on the corresponding
+        // oneshot::Receiver to observe an error instead of hanging forever.
+        self.pending_commands.clear();
+    }
+
     pub fn start_election(&mut self) -> Result<(), RaftError> {
         // Increment current term
         self.state.current_term += 1;
@@ -308,6 +314,7 @@ impl RaftNode {
                     self.state.current_term = term;
                     self.state.voted_for = None;
                     self.state.role = NodeRole::Follower;
+                    self.abort_pending_commands();
                     return Ok(None);
                 }
                 if self.state.role == NodeRole::Candidate
@@ -369,6 +376,7 @@ impl RaftNode {
             self.state.current_term = term;
             self.state.voted_for = None;
             self.state.role = NodeRole::Follower;
+            self.abort_pending_commands();
         }
 
         // Decide whether to grant vote
@@ -409,6 +417,7 @@ impl RaftNode {
             self.state.current_term = term;
             self.state.voted_for = None;
             self.state.role = NodeRole::Follower;
+            self.abort_pending_commands();
             return Ok(());
         }
 
@@ -467,6 +476,7 @@ impl RaftNode {
         // Ensure we're a follower
         if self.state.role != NodeRole::Follower {
             self.state.role = NodeRole::Follower;
+            self.abort_pending_commands();
         }
 
         // Check if log contains an entry at prevLogIndex with prevLogTerm
@@ -556,6 +566,7 @@ impl RaftNode {
             self.state.current_term = term;
             self.state.voted_for = None;
             self.state.role = NodeRole::Follower;
+            self.abort_pending_commands();
             return Ok(());
         }
 
@@ -858,5 +869,19 @@ mod tests {
         node.state.role = NodeRole::Leader;
         node.lease_expiry = Some(Instant::now() - Duration::from_millis(1));
         assert!(!node.can_serve_read_locally());
+    }
+
+    #[tokio::test]
+    async fn abort_pending_commands_cancels_waiters() {
+        let tmp = tempdir().expect("tempdir");
+        let cfg = RaftConfig::new("n1", tmp.path().to_str().unwrap());
+        let mut node = RaftNode::new(cfg);
+
+        let (tx, rx) = oneshot::channel::<()>();
+        node.pending_commands.insert(1, tx);
+
+        node.abort_pending_commands();
+
+        assert!(rx.await.is_err());
     }
 }
