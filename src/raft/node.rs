@@ -813,3 +813,50 @@ impl RaftNode {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use tempfile::tempdir;
+
+    #[test]
+    fn start_election_single_node_becomes_leader_and_sets_lease() {
+        let tmp = tempdir().expect("tempdir");
+        let cfg = RaftConfig::new("n1", tmp.path().to_str().unwrap());
+        let mut node = RaftNode::new(cfg);
+
+        assert_eq!(node.state.current_term, 0);
+        assert!(matches!(node.state.role, NodeRole::Follower));
+
+        node.start_election().expect("start_election");
+
+        assert!(node.is_leader());
+        assert_eq!(node.state.current_term, 1);
+        assert_eq!(node.state.voted_for.as_deref(), Some("n1"));
+        assert_eq!(node.state.leader_id.as_deref(), Some("n1"));
+        assert!(node.lease_expiry.is_some());
+        assert!(node.can_serve_read_locally());
+    }
+
+    #[test]
+    fn can_serve_read_locally_false_when_not_leader_or_no_lease() {
+        let tmp = tempdir().expect("tempdir");
+        let cfg = RaftConfig::new("n1", tmp.path().to_str().unwrap());
+        let node = RaftNode::new(cfg);
+
+        assert!(!node.is_leader());
+        assert!(!node.can_serve_read_locally());
+    }
+
+    #[test]
+    fn can_serve_read_locally_false_when_lease_expired() {
+        let tmp = tempdir().expect("tempdir");
+        let cfg = RaftConfig::new("n1", tmp.path().to_str().unwrap());
+        let mut node = RaftNode::new(cfg);
+
+        node.state.role = NodeRole::Leader;
+        node.lease_expiry = Some(Instant::now() - Duration::from_millis(1));
+        assert!(!node.can_serve_read_locally());
+    }
+}

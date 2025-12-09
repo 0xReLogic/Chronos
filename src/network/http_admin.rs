@@ -132,3 +132,51 @@ fn dir_size(path: &str) -> u64 {
     walk(Path::new(path), &mut total);
     total
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raft::RaftConfig;
+    use crate::raft::RaftNode;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn health_reports_ok_with_initial_follower_state() {
+        let tmp_dir = tempdir().expect("tempdir");
+        let data_dir = tmp_dir.path().to_string_lossy().to_string();
+
+        let config = RaftConfig::new("node1", &data_dir);
+        let node = Arc::new(Mutex::new(RaftNode::new(config)));
+
+        let body = build_health(Arc::clone(&node)).await;
+
+        assert!(body.contains("\"status\":\"ok\""));
+        assert!(body.contains("\"role\":\"Follower\""));
+        assert!(body.contains("\"term\":0"));
+    }
+
+    #[tokio::test]
+    async fn metrics_exports_expected_keys() {
+        let tmp_dir = tempdir().expect("tempdir");
+        let data_dir = tmp_dir.path().to_string_lossy().to_string();
+
+        let config = RaftConfig::new("node1", &data_dir);
+        let node = Arc::new(Mutex::new(RaftNode::new(config)));
+
+        // Record some SQL activity to touch the metrics counters.
+        metrics::record_sql(true);
+        metrics::record_sql(false);
+
+        let body = build_metrics(Arc::clone(&node), data_dir).await;
+
+        // Check that the main Prometheus metrics keys are present. We don't assert on
+        // exact numeric values to keep the test robust across runs.
+        assert!(body.contains("chronos_sql_requests_total{kind=\"read\"}"));
+        assert!(body.contains("chronos_sql_requests_total{kind=\"write\"}"));
+        assert!(body.contains("chronos_raft_term"));
+        assert!(body.contains("chronos_raft_role"));
+        assert!(body.contains("chronos_storage_size_bytes"));
+    }
+}

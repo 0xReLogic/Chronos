@@ -9,6 +9,7 @@ authors = ["Allen Elzayn"]
 tempfile = "3.3.0"
 criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.4"
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [dependencies]
 # SQL Parser

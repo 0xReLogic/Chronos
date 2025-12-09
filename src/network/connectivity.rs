@@ -59,7 +59,7 @@ impl ConnectivityMonitor {
         }
     }
 
-    async fn check_once(target: &str) -> bool {
+    pub async fn check_once(target: &str) -> bool {
         let endpoint = match Endpoint::from_shared(format!("http://{}", target)) {
             Ok(ep) => ep,
             Err(_) => return false,

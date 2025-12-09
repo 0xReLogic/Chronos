@@ -141,3 +141,89 @@ impl Log {
         self.save_to_disk()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn new_initializes_dummy_entry() {
+        let tmp = tempdir().expect("tempdir");
+        let data_dir = tmp.path().to_string_lossy().to_string();
+
+        let log = Log::new(&data_dir);
+
+        // Index 0 should always exist as a dummy entry with term 0.
+        assert_eq!(log.last_index(), 0);
+        assert_eq!(log.term_at(0), Some(0));
+    }
+
+    #[test]
+    fn append_and_persist_entries_across_restarts() {
+        let tmp = tempdir().expect("tempdir");
+        let data_dir = tmp.path().to_string_lossy().to_string();
+
+        {
+            // First instance: append a couple of entries and ensure indices are correct.
+            let mut log = Log::new(&data_dir);
+            let idx1 = log
+                .append(LogEntry {
+                    term: 1,
+                    command: b"cmd1".to_vec(),
+                })
+                .expect("append 1");
+            let idx2 = log
+                .append(LogEntry {
+                    term: 2,
+                    command: b"cmd2".to_vec(),
+                })
+                .expect("append 2");
+
+            assert_eq!(idx1, 1);
+            assert_eq!(idx2, 2);
+            assert_eq!(log.last_index(), 2);
+        }
+
+        // New instance reading from the same data_dir should see the persisted entries.
+        let log = Log::new(&data_dir);
+        assert_eq!(log.last_index(), 2);
+        assert_eq!(log.term_at(1), Some(1));
+        assert_eq!(log.term_at(2), Some(2));
+
+        // get_entries should return the correct slice.
+        let entries = log.get_entries(1, None).expect("get_entries");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].term, 1);
+        assert_eq!(entries[1].term, 2);
+    }
+
+    #[test]
+    fn truncate_discards_entries_and_rewrites_log() {
+        let tmp = tempdir().expect("tempdir");
+        let data_dir = tmp.path().to_string_lossy().to_string();
+
+        let mut log = Log::new(&data_dir);
+        for term in 1..=3u64 {
+            log.append(LogEntry {
+                term,
+                command: vec![],
+            })
+            .expect("append");
+        }
+
+        assert_eq!(log.last_index(), 3);
+
+        // Truncate down to index 1 should keep dummy + first real entry.
+        log.truncate(1).expect("truncate");
+        assert_eq!(log.last_index(), 1);
+        assert_eq!(log.term_at(1), Some(1));
+
+        // Truncating with index 0 is invalid.
+        let err = log.truncate(0).unwrap_err();
+        match err {
+            RaftError::InvalidLogIndex(i) => assert_eq!(i, 0),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+}

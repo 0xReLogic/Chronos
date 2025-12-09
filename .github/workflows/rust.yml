@@ -39,7 +39,7 @@ jobs:
     - name: Install protoc
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
     - name: Run 3-node Raft soak/chaos smoke test
-      run: cargo test --test raft_cluster three_node_cluster_soak_and_chaos_smoke
+      run: cargo test --test raft_cluster three_node_cluster_soak_and_chaos_smoke -- --ignored
 
   coverage:
 
