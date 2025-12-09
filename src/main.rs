@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use clap::{Parser, Subcommand};
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::sleep;
+use tonic::transport::{ServerTlsConfig, Identity as TlsIdentity, Certificate as TlsCertificate};
 
 use chronos::Executor;
 use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
@@ -183,6 +184,29 @@ enum Command {
         #[arg(short, long, default_value = "data")]
         data_dir: String,
     },
+}
+
+fn load_server_tls_from_env() -> Result<Option<ServerTlsConfig>, Box<dyn std::error::Error>> {
+    let cert_path = match std::env::var("CHRONOS_TLS_CERT") {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let key_path = std::env::var("CHRONOS_TLS_KEY")?;
+    let ca_path = std::env::var("CHRONOS_TLS_CA_CERT").ok();
+
+    let cert = std::fs::read(cert_path)?;
+    let key = std::fs::read(key_path)?;
+    let identity = TlsIdentity::from_pem(cert, key);
+
+    let mut config = ServerTlsConfig::new().identity(identity);
+
+    if let Some(ca_path) = ca_path {
+        let ca_bytes = std::fs::read(ca_path)?;
+        let ca = TlsCertificate::from_pem(ca_bytes);
+        config = config.client_ca_root(ca);
+    }
+
+    Ok(Some(config))
 }
 
 #[tokio::main]
@@ -390,8 +414,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
 
+            let mut server_builder = tonic::transport::Server::builder();
+
+            if let Some(tls_config) = load_server_tls_from_env()? {
+                server_builder = server_builder.tls_config(tls_config)?;
+            }
+
             info!("gRPC server listening on {addr}");
-            tonic::transport::Server::builder()
+            server_builder
                 .add_service(chronos::network::proto::raft_service_server::RaftServiceServer::new(raft_server))
                 .add_service(chronos::network::proto::sql_service_server::SqlServiceServer::new(sql_server))
                 .add_service(chronos::network::proto::health_service_server::HealthServiceServer::new(health_server))

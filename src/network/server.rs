@@ -24,6 +24,92 @@ use crate::network::sync_status::SharedSyncStatus;
 
 type LwwStateMap = HashMap<(String, Vec<u8>), HybridTimestamp>;
 
+#[derive(Debug, Clone, Copy)]
+enum Role {
+    Admin,
+    ReadOnly,
+}
+
+#[derive(Debug, Clone)]
+struct AuthContext {
+    user: String,
+    role: Option<Role>,
+}
+
+fn load_auth_tokens_from_env() -> (Option<String>, Option<String>) {
+    let admin = std::env::var("CHRONOS_AUTH_TOKEN_ADMIN").ok();
+    let readonly = std::env::var("CHRONOS_AUTH_TOKEN_READONLY").ok();
+    (admin, readonly)
+}
+
+#[allow(clippy::result_large_err)]
+fn authenticate_request(
+    metadata: &tonic::metadata::MetadataMap,
+    is_read_query: bool,
+) -> Result<AuthContext, Status> {
+    let (admin_token, readonly_token) = load_auth_tokens_from_env();
+    let require_auth = admin_token.is_some() || readonly_token.is_some();
+
+    let user = metadata
+        .get("x-chronos-user")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("anonymous")
+        .to_string();
+
+    if !require_auth {
+        return Ok(AuthContext { user, role: None });
+    }
+
+    let raw = metadata
+        .get("authorization")
+        .ok_or_else(|| Status::unauthenticated("missing authorization header"))?;
+    let raw_str = raw
+        .to_str()
+        .map_err(|_| Status::unauthenticated("invalid authorization header"))?;
+
+    const PREFIX: &str = "Bearer ";
+    if !raw_str.starts_with(PREFIX) {
+        return Err(Status::unauthenticated("invalid authorization scheme"));
+    }
+    let token = &raw_str[PREFIX.len()..];
+
+    let role = if let Some(ref admin) = admin_token {
+        if token == admin {
+            Role::Admin
+        } else if let Some(ref ro) = readonly_token {
+            if token == ro {
+                Role::ReadOnly
+            } else {
+                return Err(Status::unauthenticated("invalid token"));
+            }
+        } else {
+            return Err(Status::unauthenticated("invalid token"));
+        }
+    } else if let Some(ref ro) = readonly_token {
+        if token == ro {
+            Role::ReadOnly
+        } else {
+            return Err(Status::unauthenticated("invalid token"));
+        }
+    } else {
+        // Should not happen if require_auth is false above, but keep a safe default.
+        return Ok(AuthContext { user, role: None });
+    };
+
+    if let Role::ReadOnly = role {
+        if !is_read_query {
+            return Err(Status::permission_denied(
+                "write operations are not allowed for read-only role",
+            ));
+        }
+    }
+
+    Ok(AuthContext {
+        user,
+        role: Some(role),
+    })
+}
+
 #[derive(Default, Debug)]
 struct SyncStats {
     /// Total number of operations successfully applied via SyncServer.
@@ -428,16 +514,29 @@ impl SqlService for SqlServer {
         request: Request<SqlRequest>,
     ) -> Result<Response<SqlResponse>, Status> {
         info!("SqlServer::execute_sql: ENTER");
-        let req = request.into_inner();
-        info!("SqlServer::execute_sql: Received SQL: {}", req.sql);
-        let is_read_query = req
-            .sql
+
+        let sql = request.get_ref().sql.clone();
+        info!("SqlServer::execute_sql: Received SQL: {}", sql);
+        let is_read_query = sql
             .trim_start()
             .to_uppercase()
             .starts_with("SELECT");
+
+        let auth = authenticate_request(request.metadata(), is_read_query)?;
+        let role_label = match auth.role {
+            Some(Role::Admin) => "Admin",
+            Some(Role::ReadOnly) => "ReadOnly",
+            None => "None",
+        };
+        info!(
+            "audit_sql user={} role={} sql={}",
+            auth.user,
+            role_label,
+            sql
+        );
         
         // Parse the SQL
-        let ast = match Parser::parse(&req.sql) {
+        let ast = match Parser::parse(&sql) {
             Ok(ast) => {
                 info!("SqlServer::execute_sql: parse OK");
                 ast

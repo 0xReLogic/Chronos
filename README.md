@@ -112,6 +112,54 @@ Available paths:
 
 ---
 
+## Security & Authentication
+
+Chronos supports optional security features controlled entirely via environment variables.
+
+> Note: Chronos does **not** automatically load `.env` files. Set all environment variables via your shell (for example `export VAR=...` or `set -a && source .env && set +a`) or via your process manager (systemd, Docker, etc.) before starting a node or client.
+
+### Tokens & RBAC
+
+- `CHRONOS_AUTH_TOKEN_ADMIN`  
+  Admin bearer token for SQL gRPC. Requests with  
+  `authorization: Bearer <CHRONOS_AUTH_TOKEN_ADMIN>`  
+  can perform both reads and writes.
+
+- `CHRONOS_AUTH_TOKEN_READONLY`  
+  Read-only bearer token. Requests using this token may only execute `SELECT` queries; write attempts are rejected with `PERMISSION_DENIED`.
+
+- `CHRONOS_AUTH_TOKEN`  
+  Convenience variable read by the Chronos client REPL in distributed mode. When set, the REPL sends  
+  `authorization: Bearer $CHRONOS_AUTH_TOKEN`  
+  on every SQL request.
+
+- `x-chronos-user` (gRPC/HTTP header)  
+  Optional user identifier propagated by clients. The SQL server logs audit entries of the form:
+
+  ```text
+  audit_sql user=<user> role=<Admin|ReadOnly|None> sql=<...>
+  ```
+
+If neither `CHRONOS_AUTH_TOKEN_ADMIN` nor `CHRONOS_AUTH_TOKEN_READONLY` is set, authentication is disabled and the server behaves like earlier versions.
+
+### TLS / mTLS for gRPC
+
+TLS is also configured via environment variables:
+
+- `CHRONOS_TLS_CERT` – PEM-encoded server certificate.
+- `CHRONOS_TLS_KEY` – PEM-encoded private key.
+- `CHRONOS_TLS_CA_CERT` – CA certificate used both to validate peers and, when set on the server, to require client certificates (mTLS).
+- `CHRONOS_TLS_DOMAIN` – optional override for TLS SNI / domain name (default: `localhost`).
+
+When `CHRONOS_TLS_CERT`, `CHRONOS_TLS_KEY` and `CHRONOS_TLS_CA_CERT` are all set:
+
+- The node’s gRPC server starts with TLS enabled.
+- All internal gRPC clients (`RaftClient`, `SqlClient`, `SyncClient`) also use TLS and present their own certificate for mTLS.
+
+If these variables are unset, Chronos continues to run in plaintext mode, which is convenient for local development and testing.
+
+---
+
 ## Quick Start
 
 Get a Chronos cluster up and running in minutes.

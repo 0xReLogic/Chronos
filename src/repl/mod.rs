@@ -26,11 +26,16 @@ impl Repl {
     }
     
     pub fn with_distributed_mode(leader_address: &str) -> Self {
+        let mut client = crate::network::SqlClient::new(leader_address);
+        if let Ok(token) = std::env::var("CHRONOS_AUTH_TOKEN") {
+            client = client.with_auth_token(token);
+        }
+
         Self {
             executor: None,
             rl: DefaultEditor::new().expect("Failed to create line editor"),
             distributed_mode: true,
-            sql_client: Some(crate::network::SqlClient::new(leader_address)),
+            sql_client: Some(client),
             pending_sql: VecDeque::new(),
         }
     }
