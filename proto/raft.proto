@@ -6,6 +6,8 @@ package raft;
 service RaftService {
   // Request Vote RPC
   rpc RequestVote (RequestVoteRequest) returns (RequestVoteResponse);
+  // Pre-Vote RPC (does not change term; dry-run of election)
+  rpc PreVote (RequestVoteRequest) returns (RequestVoteResponse);
   
   // Append Entries RPC
   rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);

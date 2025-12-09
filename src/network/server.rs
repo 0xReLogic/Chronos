@@ -195,6 +195,45 @@ impl RaftService for RaftServer {
         
         Ok(Response::new(response))
     }
+
+    async fn pre_vote(
+        &self,
+        request: Request<RequestVoteRequest>,
+    ) -> Result<Response<RequestVoteResponse>, Status> {
+        let req = request.into_inner();
+        debug!("Received PreVote: {:?}", req);
+
+        let mut node = self.node.lock().await;
+
+        // Convert to internal message format
+        let message = RaftMessage::PreVote {
+            term: req.term,
+            candidate_id: req.candidate_id,
+            last_log_index: req.last_log_index,
+            last_log_term: req.last_log_term,
+        };
+
+        // Process the message
+        let mut response = RequestVoteResponse {
+            term: node.state().current_term,
+            vote_granted: false,
+        };
+
+        match node.handle_message(message) {
+            Ok(reply) => {
+                if let Some(RaftMessage::PreVoteResponse { term, vote_granted }) = reply {
+                    response.term = term;
+                    response.vote_granted = vote_granted;
+                }
+            },
+            Err(e) => {
+                error!("Error handling PreVote: {e}");
+                return Err(Status::internal(format!("Internal error: {e}")));
+            }
+        }
+
+        Ok(Response::new(response))
+    }
     
     async fn append_entries(
         &self,

@@ -287,7 +287,21 @@ impl Executor {
         );
         
         if is_read_only {
-            // Read-only queries can be executed directly
+            // Read-only queries: if in distributed mode, prefer serving on the leader.
+            if let Some(node_weak) = &self.raft_node {
+                if let Some(node) = node_weak.upgrade() {
+                    let (is_leader, lease_ok) = {
+                        let node = node.lock().await;
+                        (node.is_leader(), node.can_serve_read_locally())
+                    };
+                    if !is_leader {
+                        return Err(ExecutorError::ExecutionError("Not the leader".to_string()));
+                    }
+                    // If leader: lease_ok can be used for observability; reads proceed regardless.
+                    let _ = lease_ok;
+                }
+            }
+
             match ast {
                 Ast::Statement(stmt) => self.execute_statement(stmt).await,
             }

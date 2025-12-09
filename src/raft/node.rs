@@ -29,6 +29,9 @@ pub struct RaftNode {
     // Leader state
     next_index: HashMap<String, u64>,
     match_index: HashMap<String, u64>,
+    // Leader lease for low-latency reads
+    lease_expiry: Option<Instant>,
+    lease_duration: Duration,
     // Optional channel to forward committed commands to an external state
     // machine (e.g., the SQL Executor) for application.
     apply_sender: Option<mpsc::UnboundedSender<Vec<u8>>>,
@@ -40,6 +43,7 @@ pub struct RaftNode {
 impl RaftNode {
     pub fn new(config: RaftConfig) -> Self {
         let peers = config.peers.clone();
+        let heartbeat_interval = config.heartbeat_interval;
         
         Self {
             id: config.node_id.clone(),
@@ -59,6 +63,8 @@ impl RaftNode {
             votes_received: HashMap::new(),
             next_index: HashMap::new(),
             match_index: HashMap::new(),
+            lease_expiry: None,
+            lease_duration: Duration::from_millis(heartbeat_interval * 3),
             apply_sender: None,
             pending_commands: HashMap::new(),
         }
@@ -134,6 +140,36 @@ impl RaftNode {
         
         Ok(())
     }
+
+    pub fn start_pre_vote(&mut self) -> Result<(), RaftError> {
+        // Pre-vote does not change current_term or voted_for.
+        self.state.role = NodeRole::Candidate;
+        self.last_election_time = Instant::now();
+        self.votes_received.clear();
+        // Count self as a pre-vote yes.
+        self.votes_received.insert(self.id.clone(), true);
+
+        let last_log_index = self.log.last_index();
+        let last_log_term = self.log.term_at(last_log_index).unwrap_or(0);
+
+        let request = RaftMessage::PreVote {
+            term: self.state.current_term,
+            candidate_id: self.id.clone(),
+            last_log_index,
+            last_log_term,
+        };
+
+        self.broadcast_message(request)?;
+
+        // Single-node optimization
+        let majority_count = self.peers.len().div_ceil(2) + 1;
+        if self.votes_received.len() >= majority_count {
+            // Proceed to real election
+            self.start_election()?;
+        }
+
+        Ok(())
+    }
     
     pub fn send_heartbeats(&mut self) -> Result<(), RaftError> {
         if !self.is_leader() {
@@ -159,7 +195,9 @@ impl RaftNode {
             
             self.send_message_to_peer(peer_id, message.clone())?;
         }
-        
+        // Extend leader lease after sending heartbeats
+        self.lease_expiry = Some(Instant::now() + self.lease_duration);
+
         Ok(())
     }
     
@@ -222,8 +260,40 @@ impl RaftNode {
             RaftMessage::RequestVote { term, candidate_id, last_log_index, last_log_term } => {
                 self.handle_request_vote(term, candidate_id, last_log_index, last_log_term)
             },
+            RaftMessage::PreVote { term, candidate_id: _, last_log_index, last_log_term } => {
+                // Pre-vote check: do NOT change term or voted_for.
+                let mut vote_granted = false;
+                let our_last_log_index = self.log.last_index();
+                let our_last_log_term = self.log.term_at(our_last_log_index).unwrap_or(0);
+                if term >= self.state.current_term
+                    && (last_log_term > our_last_log_term
+                        || (last_log_term == our_last_log_term && last_log_index >= our_last_log_index))
+                {
+                    vote_granted = true;
+                }
+                let response = RaftMessage::PreVoteResponse { term: self.state.current_term, vote_granted };
+                Ok(Some(response))
+            },
             RaftMessage::RequestVoteResponseFromPeer { peer_id, term, vote_granted } => {
                 self.handle_request_vote_response(peer_id, term, vote_granted).map(|_| None)
+            },
+            RaftMessage::PreVoteResponseFromPeer { peer_id, term, vote_granted } => {
+                // Ignore responses with higher term (become follower)
+                if term > self.state.current_term {
+                    self.state.current_term = term;
+                    self.state.voted_for = None;
+                    self.state.role = NodeRole::Follower;
+                    return Ok(None);
+                }
+                if self.state.role == NodeRole::Candidate && term == self.state.current_term && vote_granted {
+                    self.votes_received.insert(peer_id, true);
+                    let votes_needed = self.peers.len().div_ceil(2) + 1; // +1 self
+                    if self.votes_received.values().filter(|&&v| v).count() >= votes_needed {
+                        // Start the real election now
+                        self.start_election()?;
+                    }
+                }
+                Ok(None)
             },
             RaftMessage::AppendEntries { term, leader_id, prev_log_index, prev_log_term, entries, leader_commit } => {
                 self.handle_append_entries(term, leader_id, prev_log_index, prev_log_term, entries, leader_commit)
@@ -234,7 +304,9 @@ impl RaftNode {
             // Plain response variants should not normally be sent into the RaftNode
             // event loop; they are wrapped into *_FromPeer by send_message_to_peer.
             // Handle them as no-ops for robustness.
-            RaftMessage::RequestVoteResponse { .. } | RaftMessage::AppendEntriesResponse { .. } => Ok(None),
+            RaftMessage::RequestVoteResponse { .. }
+            | RaftMessage::PreVoteResponse { .. }
+            | RaftMessage::AppendEntriesResponse { .. } => Ok(None),
         }
     }
     
@@ -470,6 +542,8 @@ impl RaftNode {
         
         self.state.role = NodeRole::Leader;
         self.state.leader_id = Some(self.id.clone());
+        // Initialize leader lease
+        self.lease_expiry = Some(Instant::now() + self.lease_duration);
         
         // Initialize leader state
         let last_log_idx = self.log.last_index();
@@ -482,6 +556,16 @@ impl RaftNode {
         self.send_heartbeats()?;
         
         Ok(())
+    }
+
+    pub fn can_serve_read_locally(&self) -> bool {
+        if !self.is_leader() {
+            return false;
+        }
+        match self.lease_expiry {
+            Some(exp) => Instant::now() < exp,
+            None => false,
+        }
     }
     
     fn update_commit_index(&mut self) -> Result<(), RaftError> {
@@ -582,6 +666,25 @@ impl RaftNode {
                         }
                         (_, Err(e)) => {
                             debug!("Failed to send RequestVote to {peer_id_clone}: {e}");
+                        }
+                        _ => {}
+                    }
+                },
+                RaftMessage::PreVote { term, candidate_id, last_log_index, last_log_term } => {
+                    let resp = client.pre_vote(term, &candidate_id, last_log_index, last_log_term).await;
+                    match (tx_opt, resp) {
+                        (Some(tx), Ok(RaftMessage::PreVoteResponse { term, vote_granted })) => {
+                            let msg = RaftMessage::PreVoteResponseFromPeer {
+                                peer_id: peer_id_clone.clone(),
+                                term,
+                                vote_granted,
+                            };
+                            if let Err(e) = tx.send(msg).await {
+                                error!("Failed to forward PreVoteResponse from {peer_id_clone}: {e}");
+                            }
+                        }
+                        (_, Err(e)) => {
+                            debug!("Failed to send PreVote to {peer_id_clone}: {e}");
                         }
                         _ => {}
                     }

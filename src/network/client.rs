@@ -137,6 +137,38 @@ impl RaftClient {
             vote_granted: response.vote_granted,
         })
     }
+
+    pub async fn pre_vote(
+        &mut self,
+        term: u64,
+        candidate_id: &str,
+        last_log_index: u64,
+        last_log_term: u64,
+    ) -> Result<RaftMessage, NetworkError> {
+        if self.client.is_none() {
+            self.connect().await?;
+        }
+
+        let request = RequestVoteRequest {
+            term,
+            candidate_id: candidate_id.to_string(),
+            last_log_index,
+            last_log_term,
+        };
+
+        let response = self
+            .client
+            .as_mut()
+            .ok_or_else(|| NetworkError::ConnectionError("Client not connected".to_string()))?
+            .pre_vote(Request::new(request))
+            .await?
+            .into_inner();
+
+        Ok(RaftMessage::PreVoteResponse {
+            term: response.term,
+            vote_granted: response.vote_granted,
+        })
+    }
     
     pub async fn append_entries(
         &mut self,

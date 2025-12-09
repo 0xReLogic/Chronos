@@ -16,12 +16,14 @@ use tokio::sync::Mutex as TokioMutex;
 use lru::LruCache;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use crate::common::timestamp::HybridTimestamp;
+use crate::storage::compression::chimp;
 
 const SCHEMA_TREE: &str = "__schemas__";
 const INDEX_META_TREE: &str = "__indexes__";
 #[allow(dead_code)]
 const TTL_TREE: &str = "__ttl__";
 const LWW_TS_TREE: &str = "__lww_ts__";
+const SERIES_META_TREE: &str = "__series_meta__";
 
 pub struct SledEngine {
     db: sled::Db,
@@ -34,9 +36,16 @@ impl SledEngine {
     pub fn new(data_dir: &str) -> Result<Self> {
         let path = PathBuf::from(data_dir);
         std::fs::create_dir_all(&path)?;
-        // Ensure on-disk storage version marker exists for upgrade checks
+        // Ensure on-disk storage version marker exists and is supported
         let ver_path = path.join("STORAGE_VERSION");
-        if !ver_path.exists() {
+        let expected_version: u32 = 1;
+        if ver_path.exists() {
+            let contents = std::fs::read_to_string(&ver_path).unwrap_or_default();
+            let parsed = contents.trim().parse::<u32>().unwrap_or(0);
+            if parsed != expected_version {
+                return Err(StorageError::UnsupportedStorageVersion(parsed).into());
+            }
+        } else {
             let _ = std::fs::write(&ver_path, b"1\n");
         }
         
@@ -93,6 +102,21 @@ impl SledEngine {
         self.db
             .open_tree(LWW_TS_TREE)
             .map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+    fn series_meta_tree(&self) -> Result<sled::Tree> {
+        self.db
+            .open_tree(SERIES_META_TREE)
+            .map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+    fn series_tree(&self, table_name: &str, column: &str) -> Result<sled::Tree> {
+        self.db
+            .open_tree(format!("series:chimp:{}:{}", table_name, column))
+            .map_err(|e| StorageError::SledError(e.to_string()).into())
+    }
+    fn chimp_enabled() -> bool {
+        std::env::var("CHRONOS_CHIMP_ENABLE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
     }
     
     fn generate_row_key(&self) -> String {
@@ -167,6 +191,21 @@ impl StorageEngine for SledEngine {
         };
         
         let row_count = rows.len();
+        // Optional: accumulate FLOAT column values per column for Chimp series
+        let do_chimp = Self::chimp_enabled();
+        let float_cols: Vec<String> = if do_chimp {
+            schema
+                .columns
+                .iter()
+                .filter_map(|c| match c.data_type {
+                    crate::storage::DataType::Float => Some(c.name.clone()),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut chimp_acc: HashMap<String, Vec<f64>> = HashMap::new();
         for row in rows {
             for col in &schema.columns {
                 if !row.values.contains_key(&col.name) {
@@ -240,6 +279,15 @@ impl StorageEngine for SledEngine {
                         .map_err(|e| StorageError::SledError(e.to_string()))?;
                 }
             }
+
+            // Accumulate floats for Chimp series (per column)
+            if do_chimp {
+                for col_name in &float_cols {
+                    if let Some(crate::parser::Value::Float(fv)) = row.get(col_name) {
+                        chimp_acc.entry(col_name.clone()).or_default().push(*fv);
+                    }
+                }
+            }
         }
         
         wal_tree.flush_async().await
@@ -249,6 +297,40 @@ impl StorageEngine for SledEngine {
 
         if let Some(ttl_tree) = ttl_tree {
             ttl_tree
+                .flush_async()
+                .await
+                .map_err(|e| StorageError::SledError(e.to_string()))?;
+        }
+        // If Chimp enabled, append encoded segments for any accumulated floats per column
+        if do_chimp && !chimp_acc.is_empty() {
+            let meta = self.series_meta_tree()?;
+            for (col, vals) in chimp_acc {
+                if vals.is_empty() { continue; }
+                let enc = chimp::encode_series(&vals);
+                let series = self.series_tree(table_name, &col)?;
+                // Meta key: series:chimp:{table}:{col}:next
+                let meta_key = format!("series:chimp:{}:{}:next", table_name, col);
+                let next_id = match meta.get(meta_key.as_bytes())? {
+                    Some(b) if b.len() == 8 => {
+                        let mut arr = [0u8; 8];
+                        arr.copy_from_slice(&b);
+                        u64::from_be_bytes(arr)
+                    }
+                    _ => 0u64,
+                };
+                let new_id = next_id.wrapping_add(1);
+                series
+                    .insert(new_id.to_be_bytes(), enc)
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+                meta
+                    .insert(meta_key.as_bytes(), &new_id.to_be_bytes())
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+                series
+                    .flush_async()
+                    .await
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
+            }
+            meta
                 .flush_async()
                 .await
                 .map_err(|e| StorageError::SledError(e.to_string()))?;

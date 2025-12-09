@@ -11,6 +11,41 @@ ChronosDB is a small distributed SQL database written in Rust, designed for edge
 
 ---
 
+## Time-Series Compression (Chimp, experimental)
+
+Chronos includes an experimental opt-in shadow-series compressor for `FLOAT` columns based on a simplified Chimp approach.
+
+- Enable via env:
+
+```bash
+CHRONOS_CHIMP_ENABLE=1 ./target/release/chronos single-node --data-dir ./data
+```
+
+- Behavior:
+  - On insert, `FLOAT` columns are accumulated per batch and written to `series:chimp:{table}:{column}` with a `__series_meta__` next-id.
+  - Row storage remains unchanged (LZ4). The series is a parallel structure to support better compression and analytics.
+  - Decoding uses an XOR-based scheme with a count header (streaming-friendly).
+
+This feature is optional and intended for experimentation and benchmarking on IoT sensor datasets.
+
+---
+
+## Admin CLI (baseline)
+
+Built-in read-only admin commands using the same `chronos` binary:
+
+```bash
+# Health status (admin HTTP is on grpc_port+1000, e.g., 127.0.0.1:9000)
+./target/release/chronos admin status --http 127.0.0.1:9000
+
+# Prometheus metrics dump
+./target/release/chronos admin metrics --http 127.0.0.1:9000
+```
+
+Outputs are identical to `/health` and `/metrics` endpoints, useful for ops scripts.
+
+---
+
 ## Architecture Overview
 
 Chronos operates as a cluster of nodes, with one leader and multiple followers. All write operations are routed through the Raft consensus module, ensuring that every change is safely replicated across a majority of nodes before being committed.
@@ -48,6 +83,8 @@ graph TD
 - **Distributed Consensus with Raft:** Guarantees data consistency and availability through a robust, from-scratch implementation of the Raft algorithm.
 - **SQL Interface:** Interact with your distributed data using familiar SQL commands (`CREATE TABLE`, `INSERT`, `SELECT`, `UPDATE`, `DELETE`).
 - **Fault Tolerance:** The cluster can survive the failure of minority nodes and continue operating, with a new leader elected automatically.
+- **Raft Pre-Vote Extension:** Pre-vote round before elections to reduce disruptive elections in flaky networks.
+- **Lease-based Reads:** Leader maintains a short lease (default 3× heartbeat); read-only queries can be served locally during lease for lower latency.
 - **Persistent Storage:** Data is persisted to disk using Sled embedded database, ensuring durability and fast performance.
 - **Async I/O:** Fully asynchronous storage operations with Tokio runtime for efficient concurrent access.
 - **Built in Rust:** Leverages Rust's performance, safety, and concurrency features to build a reliable system.

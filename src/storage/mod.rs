@@ -3,6 +3,7 @@ pub mod error;
 pub mod wal;
 pub mod offline_queue;
 pub mod snapshot;
+pub mod compression;
 
 pub use sled_engine::SledEngine;
 pub use error::StorageError;

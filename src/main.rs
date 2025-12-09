@@ -28,6 +28,41 @@ struct RotatingFile {
     current_size: u64,
 }
 
+#[derive(Subcommand)]
+enum AdminCmd {
+    /// Show node health from the HTTP admin endpoint (host:port of admin HTTP)
+    Status {
+        /// Admin HTTP address, e.g. 127.0.0.1:9000
+        #[arg(short, long)]
+        http: String,
+    },
+    /// Dump Prometheus metrics from the HTTP admin endpoint
+    Metrics {
+        /// Admin HTTP address, e.g. 127.0.0.1:9000
+        #[arg(short, long)]
+        http: String,
+    },
+}
+
+fn http_get(host_port: &str, path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    let mut stream = TcpStream::connect(host_port)?;
+    let req = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        path, host_port
+    );
+    stream.write_all(req.as_bytes())?;
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf)?;
+    let resp = String::from_utf8_lossy(&buf);
+    if let Some(pos) = resp.find("\r\n\r\n") {
+        Ok(resp[pos + 4..].to_string())
+    } else {
+        Ok(resp.to_string())
+    }
+}
+
 fn init_logging() {
     let _ = LogTracer::init();
 
@@ -191,6 +226,12 @@ enum Command {
         #[command(subcommand)]
         cmd: SnapshotCmd,
     },
+
+    /// Admin tooling
+    Admin {
+        #[command(subcommand)]
+        cmd: AdminCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -297,6 +338,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Command::Admin { cmd } => {
+            match cmd {
+                AdminCmd::Status { http } => {
+                    let body = http_get(&http, "/health")?;
+                    println!("{}", body);
+                }
+                AdminCmd::Metrics { http } => {
+                    let body = http_get(&http, "/metrics")?;
+                    println!("{}", body);
+                }
+            }
+        }
         Command::Node { id, data_dir, address, peers, clean, sync_target, sync_interval_secs, sync_batch_size, ttl_cleanup_interval_secs } => {
             info!("Starting Chronos node {id} at {address}");
 

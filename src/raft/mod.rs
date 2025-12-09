@@ -27,11 +27,26 @@ pub enum RaftMessage {
         last_log_index: u64,
         last_log_term: u64,
     },
+    PreVote {
+        term: u64,
+        candidate_id: String,
+        last_log_index: u64,
+        last_log_term: u64,
+    },
     RequestVoteResponse {
         term: u64,
         vote_granted: bool,
     },
+    PreVoteResponse {
+        term: u64,
+        vote_granted: bool,
+    },
     RequestVoteResponseFromPeer {
+        peer_id: String,
+        term: u64,
+        vote_granted: bool,
+    },
+    PreVoteResponseFromPeer {
         peer_id: String,
         term: u64,
         vote_granted: bool,
@@ -123,8 +138,8 @@ impl Raft {
                 } else {
                     // Check if election timeout has elapsed
                     if node.election_timeout_elapsed() {
-                        info!("Election timeout elapsed, starting election");
-                        match node.start_election() {
+                        info!("Election timeout elapsed, starting pre-vote");
+                        match node.start_pre_vote() {
                             Ok(_) => debug!("Started election"),
                             Err(e) => error!("Error starting election: {e}"),
                         }
