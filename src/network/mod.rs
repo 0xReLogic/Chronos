@@ -51,3 +51,33 @@ pub mod proto {
 
 pub use client::{RaftClient, SqlClient, SyncClient};
 pub use server::{RaftServer, SqlServer};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Status;
+
+    #[test]
+    fn display_includes_error_kind() {
+        let conn = NetworkError::ConnectionError("boom".to_string());
+        assert!(format!("{conn}").contains("Connection error"));
+
+        let rpc = NetworkError::RpcError("bad".to_string());
+        assert!(format!("{rpc}").contains("RPC error"));
+
+        let transport = NetworkError::TransportError("down".to_string());
+        assert!(format!("{transport}").contains("Transport error"));
+    }
+
+    #[test]
+    fn from_tonic_status_maps_to_rpc_error() {
+        let status = Status::invalid_argument("oops");
+        let err: NetworkError = status.into();
+        match err {
+            NetworkError::RpcError(msg) => {
+                assert!(msg.contains("oops"));
+            }
+            other => panic!("expected RpcError, got {other:?}"),
+        }
+    }
+}

@@ -657,3 +657,92 @@ impl SqlService for SqlServer {
         Ok(Response::new(response))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::{Mutex as TokioMutex, RwLock};
+    use tonic::metadata::{AsciiMetadataValue, MetadataMap};
+    use tonic::{Code, Request};
+    use crate::network::SyncStatusState;
+
+    fn make_metadata(user: &str, auth_header: Option<&str>) -> MetadataMap {
+        let mut meta = MetadataMap::new();
+        meta.insert(
+            "x-chronos-user",
+            AsciiMetadataValue::try_from(user).expect("user meta"),
+        );
+        if let Some(h) = auth_header {
+            meta.insert(
+                "authorization",
+                AsciiMetadataValue::try_from(h).expect("auth meta"),
+            );
+        }
+        meta
+    }
+
+    #[test]
+    fn authenticate_request_allows_anonymous_when_no_tokens_set() {
+        std::env::remove_var("CHRONOS_AUTH_TOKEN_ADMIN");
+        std::env::remove_var("CHRONOS_AUTH_TOKEN_READONLY");
+
+        let meta = make_metadata("alice", None);
+        let ctx = authenticate_request(&meta, false).expect("auth should succeed");
+        assert_eq!(ctx.user, "alice");
+        assert!(ctx.role.is_none());
+    }
+
+    #[test]
+    fn authenticate_request_admin_token_allows_write() {
+        std::env::set_var("CHRONOS_AUTH_TOKEN_ADMIN", "secret-admin");
+        std::env::remove_var("CHRONOS_AUTH_TOKEN_READONLY");
+
+        let meta = make_metadata("bob", Some("Bearer secret-admin"));
+        let ctx = authenticate_request(&meta, false).expect("auth should succeed");
+        assert_eq!(ctx.user, "bob");
+        matches!(ctx.role, Some(Role::Admin));
+    }
+
+    #[test]
+    fn authenticate_request_readonly_rejects_write_queries() {
+        std::env::remove_var("CHRONOS_AUTH_TOKEN_ADMIN");
+        std::env::set_var("CHRONOS_AUTH_TOKEN_READONLY", "ro-token");
+
+        let meta = make_metadata("carol", Some("Bearer ro-token"));
+        let err = authenticate_request(&meta, false).unwrap_err();
+        assert_eq!(err.code(), Code::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn health_server_reports_connectivity_state() {
+        let state = Arc::new(RwLock::new(ConnectivityState::Reconnecting));
+        let server = HealthServer::new(Arc::clone(&state));
+
+        let req = Request::new(HealthRequest {});
+        let resp = server.get_connectivity(req).await.expect("health OK");
+        let inner = resp.into_inner();
+        assert_eq!(inner.state, "Reconnecting");
+    }
+
+    #[tokio::test]
+    async fn sync_status_server_returns_current_status() {
+        let status = SyncStatusState {
+            pending_ops: 5,
+            last_sync_applied: 10,
+            last_sync_ts_ms: 1234,
+            last_error: Some("boom".to_string()),
+        };
+        let shared: SharedSyncStatus = Arc::new(TokioMutex::new(status));
+        let server = SyncStatusServer::new(Arc::clone(&shared));
+
+        let req = Request::new(SyncStatusRequest {});
+        let resp = server.get_sync_status(req).await.expect("sync_status OK");
+        let inner = resp.into_inner();
+
+        assert_eq!(inner.pending_ops, 5);
+        assert_eq!(inner.last_sync_applied, 10);
+        assert_eq!(inner.last_sync_ts_ms, 1234);
+        assert_eq!(inner.last_error, "boom".to_string());
+    }
+}
