@@ -409,6 +409,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+## Running Chronos with Docker
+
+Chronos includes a `Dockerfile` and `docker-compose.yml` to spin up a 3-node Raft cluster for development or cloud environments.
+
+```bash
+# From the project root
+docker-compose build
+docker-compose up -d
+```
+
+This starts three Chronos nodes:
+
+- node1 (leader): gRPC `127.0.0.1:8000`, admin `http://127.0.0.1:9000`
+- node2: gRPC `127.0.0.1:8001`, admin `http://127.0.0.1:9001`
+- node3: gRPC `127.0.0.1:8002`, admin `http://127.0.0.1:9002`
+
+You can then connect from the host using the client REPL:
+
+```bash
+cargo run --release -- client --leader 127.0.0.1:8000 --data-dir data
+```
+
+> Note: Docker is primarily intended for development and cloud deployments.
+> On constrained IoT devices, it is usually better to run the compiled `chronos` binary directly (size ~3.7MB) without Docker to minimize RAM and storage overhead.
+
+
 ## Testing
 
 - Run the full test suite:

@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  node1:
+    build: .
+    container_name: chronos-node1
+    command: [
+      "node",
+      "--id", "node1",
+      "--data-dir", "/data",
+      "--address", "0.0.0.0:8000",
+      "--peers", "node2=node2:8000,node3=node3:8000"
+    ]
+    ports:
+      - "8000:8000"   # gRPC SQL/Raft
+      - "9000:9000"   # HTTP admin (gRPC port + 1000)
+    environment:
+      CHRONOS_AUTH_TOKEN_ADMIN: "admin-secret"
+      CHRONOS_AUTH_TOKEN_READONLY: "readonly-secret"
+    volumes:
+      - node1-data:/data
+
+  node2:
+    build: .
+    container_name: chronos-node2
+    command: [
+      "node",
+      "--id", "node2",
+      "--data-dir", "/data",
+      "--address", "0.0.0.0:8000",
+      "--peers", "node1=node1:8000,node3=node3:8000"
+    ]
+    ports:
+      - "8001:8000"
+      - "9001:9000"
+    environment:
+      CHRONOS_AUTH_TOKEN_ADMIN: "admin-secret"
+      CHRONOS_AUTH_TOKEN_READONLY: "readonly-secret"
+    volumes:
+      - node2-data:/data
+
+  node3:
+    build: .
+    container_name: chronos-node3
+    command: [
+      "node",
+      "--id", "node3",
+      "--data-dir", "/data",
+      "--address", "0.0.0.0:8000",
+      "--peers", "node1=node1:8000,node2=node2:8000"
+    ]
+    ports:
+      - "8002:8000"
+      - "9002:9000"
+    environment:
+      CHRONOS_AUTH_TOKEN_ADMIN: "admin-secret"
+      CHRONOS_AUTH_TOKEN_READONLY: "readonly-secret"
+    volumes:
+      - node3-data:/data
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
