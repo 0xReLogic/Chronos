@@ -34,6 +34,11 @@ impl SledEngine {
     pub fn new(data_dir: &str) -> Result<Self> {
         let path = PathBuf::from(data_dir);
         std::fs::create_dir_all(&path)?;
+        // Ensure on-disk storage version marker exists for upgrade checks
+        let ver_path = path.join("STORAGE_VERSION");
+        if !ver_path.exists() {
+            let _ = std::fs::write(&ver_path, b"1\n");
+        }
         
         let db = sled::open(&path)
             .map_err(|e| StorageError::SledError(e.to_string()))?;

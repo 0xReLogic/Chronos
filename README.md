@@ -112,6 +112,45 @@ Available paths:
 
 ---
 
+## Backup & Restore (Snapshots)
+
+Chronos provides a simple snapshot mechanism to back up and restore a node's data directory.
+
+Subcommands are lowercase: `client`, `node`, `single-node`, `snapshot`.
+
+### Create a snapshot
+
+```bash
+./target/release/chronos snapshot create \
+  --data-dir ./data/node-1 \
+  --output ./backup.snap
+```
+
+Notes:
+- Ensure no process is holding a lock on `--data-dir` (stop REPL/node first).
+- The snapshot captures all sled trees (schemas, tables, indexes, TTL/LWW/queue/WAL) and `raft/log.bin`.
+
+### Restore from a snapshot
+
+```bash
+./target/release/chronos snapshot restore \
+  --data-dir ./data/restore-node-1 \
+  --input ./backup.snap \
+  --force
+```
+
+### Cron example (hourly backups)
+
+```cron
+0 * * * * chronos snapshot create --data-dir /var/lib/chronos/node-1 --output /backups/node-1-$(date +\%s).snap
+```
+
+### REPL tip
+
+- End SQL with `;`. Example: `SELECT * FROM sensors;`
+
+---
+
 ## Security & Authentication
 
 Chronos supports optional security features controlled entirely via environment variables.

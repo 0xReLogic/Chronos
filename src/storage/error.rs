@@ -28,4 +28,7 @@ pub enum StorageError {
     
     #[error("Transaction error: {0}")]
     TransactionError(String),
+
+    #[error("Unsupported storage version: {0}")]
+    UnsupportedStorageVersion(u32),
 }

@@ -10,6 +10,7 @@ use tokio::time::sleep;
 use tonic::transport::{ServerTlsConfig, Identity as TlsIdentity, Certificate as TlsCertificate};
 
 use chronos::Executor;
+use chronos::storage::snapshot::{create_snapshot, restore_snapshot};
 use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
 use log::{info, error};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -184,6 +185,37 @@ enum Command {
         #[arg(short, long, default_value = "data")]
         data_dir: String,
     },
+
+    /// Snapshot management (backup/restore)
+    Snapshot {
+        #[command(subcommand)]
+        cmd: SnapshotCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum SnapshotCmd {
+    /// Create a snapshot of the node data directory
+    Create {
+        /// Directory to snapshot (e.g., data/node-1)
+        #[arg(short, long, default_value = "data")]
+        data_dir: String,
+        /// Output snapshot file path
+        #[arg(short, long)]
+        output: String,
+    },
+    /// Restore a node data directory from a snapshot
+    Restore {
+        /// Directory to restore into (will be created). Refuses if not empty unless --force
+        #[arg(short, long, default_value = "data")]
+        data_dir: String,
+        /// Input snapshot file path
+        #[arg(short, long)]
+        input: String,
+        /// Overwrite non-empty directory
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
 fn load_server_tls_from_env() -> Result<Option<ServerTlsConfig>, Box<dyn std::error::Error>> {
@@ -248,6 +280,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let mut repl = Repl::new(&data_dir).await;
                     repl.run().await;
+                }
+            }
+        },
+        Command::Snapshot { cmd } => {
+            match cmd {
+                SnapshotCmd::Create { data_dir, output } => {
+                    info!("Creating snapshot from '{data_dir}' to '{output}'...");
+                    create_snapshot(&data_dir, &output)?;
+                    info!("Snapshot created: {output}");
+                }
+                SnapshotCmd::Restore { data_dir, input, force } => {
+                    info!("Restoring snapshot '{input}' into '{data_dir}' (force={force})...");
+                    restore_snapshot(&data_dir, &input, force)?;
+                    info!("Snapshot restored into {data_dir}");
                 }
             }
         },

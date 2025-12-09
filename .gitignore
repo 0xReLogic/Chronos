@@ -34,3 +34,6 @@ clippy_log.txt
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Snapshots
+*.snap
