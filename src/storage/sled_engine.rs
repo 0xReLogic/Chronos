@@ -258,65 +258,78 @@ impl StorageEngine for SledEngine {
         let tree = self.table_tree(table_name)?;
         let mut results = Vec::new();
 
-        // Try to use a secondary index when we have a simple equality filter
+        // Prefer secondary index for simple equality filters when available.
+        // If no index or no hits, fall back to full table scan.
         if let Some(ref f) = filter {
             if matches!(f.op, FilterOp::Eq) {
-                if let Ok(index_tree) = self.index_tree(table_name, &f.column) {
-                    let prefix = serde_json::to_string(&f.value)?;
+                let index_meta = self.index_meta_tree()?;
+                let meta_key = format!("{}:{}", table_name, f.column);
+                let has_index = index_meta
+                    .contains_key(meta_key.as_bytes())
+                    .map_err(|e| StorageError::SledError(e.to_string()))?;
 
-                    for item in index_tree.scan_prefix(prefix.as_bytes()) {
-                        let (_index_key, row_key) = item
-                            .map_err(|e| StorageError::SledError(e.to_string()))?;
+                if has_index {
+                    if let Ok(index_tree) = self.index_tree(table_name, &f.column) {
+                        let prefix = serde_json::to_string(&f.value)?;
 
-                        let cache_key = (table_name.to_string(), row_key.to_vec());
+                        for item in index_tree.scan_prefix(prefix.as_bytes()) {
+                            let (_index_key, row_key) = item
+                                .map_err(|e| StorageError::SledError(e.to_string()))?;
 
-                        // Check cache first
-                        let cached_row = {
-                            let mut cache = self.cache.lock().await;
-                            cache.get(&cache_key).cloned()
-                        };
+                            let cache_key = (table_name.to_string(), row_key.to_vec());
 
-                        let row = if let Some(row) = cached_row {
-                            row
-                        } else {
-                            // Fallback to storage
-                            let stored = match tree
-                                .get(&row_key)
-                                .map_err(|e| StorageError::SledError(e.to_string()))?
-                            {
-                                Some(v) => v,
-                                None => continue,
-                            };
-                            let value = decompress_row(&stored)?;
-                            let (row, _): (Row, usize) =
-                                bincode::decode_from_slice(&value, bincode::config::standard())?;
-
-                            // Insert into cache
-                            {
+                            // Check cache first
+                            let cached_row = {
                                 let mut cache = self.cache.lock().await;
-                                cache.put(cache_key, row.clone());
+                                cache.get(&cache_key).cloned()
+                            };
+
+                            let row = if let Some(row) = cached_row {
+                                row
+                            } else {
+                                // Fallback to storage
+                                let stored = match tree
+                                    .get(&row_key)
+                                    .map_err(|e| StorageError::SledError(e.to_string()))?
+                                {
+                                    Some(v) => v,
+                                    None => continue,
+                                };
+                                let value = decompress_row(&stored)?;
+                                let (row, _): (Row, usize) =
+                                    bincode::decode_from_slice(&value, bincode::config::standard())?;
+
+                                // Insert into cache
+                                {
+                                    let mut cache = self.cache.lock().await;
+                                    cache.put(cache_key, row.clone());
+                                }
+
+                                row
+                            };
+
+                            // Extra safety: still apply the filter in case of type mismatches
+                            if let Some(ref f) = filter {
+                                if !f.matches(&row) {
+                                    continue;
+                                }
                             }
 
-                            row
-                        };
-
-                        // Extra safety: still apply the filter in case of type mismatches
-                        if let Some(ref f) = filter {
-                            if !f.matches(&row) {
-                                continue;
-                            }
+                            results.push(row);
                         }
 
-                        results.push(row);
+                        log::debug!(
+                            "Query (indexed) returned {} rows from table '{}'",
+                            results.len(),
+                            table_name
+                        );
+
+                        // If the indexed lookup found rows, return them.
+                        if !results.is_empty() {
+                            return Ok(results);
+                        }
+                        // Otherwise, fall through to the full table scan below.
                     }
-
-                    log::debug!(
-                        "Query (indexed) returned {} rows from table '{}'",
-                        results.len(),
-                        table_name
-                    );
-
-                    return Ok(results);
                 }
             }
         }

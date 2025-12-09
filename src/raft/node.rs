@@ -177,6 +177,11 @@ impl RaftNode {
         let log_index = self.log.append(entry)?;
         let (tx, rx) = oneshot::channel();
         self.pending_commands.insert(log_index, tx);
+        // Update commit index immediately after appending so that single-node
+        // clusters (with no peers) can commit entries based on the leader's
+        // own log, while multi-node clusters still wait for follower
+        // match_index updates.
+        self.update_commit_index()?;
         
         // Replicate to followers
         self.replicate_log()?;
