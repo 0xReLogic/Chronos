@@ -657,6 +657,12 @@ Try the IoT sensor demo:
 cargo run --example storage_demo
 ```
 
+---
+
+## Limitations
+
+Chronos is a pre-v1 project focused on small edge/IoT deployments. Before running it in production, please review the current **known limitations and non-goals** described in `docs/limitations.md`.
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE.md file for details.

@@ -3,6 +3,7 @@
 This folder contains user- and operator-focused documentation built on top of the main `README.md` and an internal production-readiness checklist.
 
 - `prod-deployment-guide.md` – high-level guide for deploying a small ChronosDB cluster in production-like environments (3-node cluster, edge→cloud).
+- `limitations.md` – current known limitations and non-goals for this pre-v1 release.
 
 Over time, more guides can be added here:
 

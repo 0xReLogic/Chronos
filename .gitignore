@@ -24,7 +24,6 @@ prod.md
 # Environment files
 # In case you add environment-specific variables
 .env
-.env.*
 
 # Editor & IDE specific files
 .vscode/
