@@ -6,8 +6,8 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::time::sleep;
 
 use crate::executor::Executor;
-use crate::network::SyncClient;
 use crate::network::SharedSyncStatus;
+use crate::network::SyncClient;
 use crate::storage::offline_queue::PersistentQueuedOperation;
 
 pub struct SyncWorker {

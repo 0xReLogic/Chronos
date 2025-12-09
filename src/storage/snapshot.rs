@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{Read, Write, BufWriter, BufReader};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -26,24 +26,48 @@ use anyhow::{anyhow, Result};
 pub const SNAPSHOT_MAGIC: &[u8] = b"CHRONOSSNAP\0"; // 12 bytes
 pub const SNAPSHOT_VERSION: u32 = 1;
 
-fn write_u16<W: Write>(w: &mut W, v: u16) -> Result<()> { w.write_all(&v.to_be_bytes()).map_err(Into::into) }
-fn write_u32<W: Write>(w: &mut W, v: u32) -> Result<()> { w.write_all(&v.to_be_bytes()).map_err(Into::into) }
-fn write_u64<W: Write>(w: &mut W, v: u64) -> Result<()> { w.write_all(&v.to_be_bytes()).map_err(Into::into) }
+fn write_u16<W: Write>(w: &mut W, v: u16) -> Result<()> {
+    w.write_all(&v.to_be_bytes()).map_err(Into::into)
+}
+fn write_u32<W: Write>(w: &mut W, v: u32) -> Result<()> {
+    w.write_all(&v.to_be_bytes()).map_err(Into::into)
+}
+fn write_u64<W: Write>(w: &mut W, v: u64) -> Result<()> {
+    w.write_all(&v.to_be_bytes()).map_err(Into::into)
+}
 
-fn read_exact<R: Read>(r: &mut R, buf: &mut [u8]) -> Result<()> { r.read_exact(buf).map_err(Into::into) }
-fn read_u16<R: Read>(r: &mut R) -> Result<u16> { let mut b=[0;2]; read_exact(r,&mut b)?; Ok(u16::from_be_bytes(b)) }
-fn read_u32<R: Read>(r: &mut R) -> Result<u32> { let mut b=[0;4]; read_exact(r,&mut b)?; Ok(u32::from_be_bytes(b)) }
-fn read_u64<R: Read>(r: &mut R) -> Result<u64> { let mut b=[0;8]; read_exact(r,&mut b)?; Ok(u64::from_be_bytes(b)) }
+fn read_exact<R: Read>(r: &mut R, buf: &mut [u8]) -> Result<()> {
+    r.read_exact(buf).map_err(Into::into)
+}
+fn read_u16<R: Read>(r: &mut R) -> Result<u16> {
+    let mut b = [0; 2];
+    read_exact(r, &mut b)?;
+    Ok(u16::from_be_bytes(b))
+}
+fn read_u32<R: Read>(r: &mut R) -> Result<u32> {
+    let mut b = [0; 4];
+    read_exact(r, &mut b)?;
+    Ok(u32::from_be_bytes(b))
+}
+fn read_u64<R: Read>(r: &mut R) -> Result<u64> {
+    let mut b = [0; 8];
+    read_exact(r, &mut b)?;
+    Ok(u64::from_be_bytes(b))
+}
 
 fn open_main_db(data_dir: &str) -> Result<sled::Db> {
     let path = Path::new(data_dir);
-    if !path.exists() { fs::create_dir_all(path)?; }
+    if !path.exists() {
+        fs::create_dir_all(path)?;
+    }
     sled::open(path).map_err(|e| anyhow!("Sled open error: {}", e))
 }
 
 fn open_agg_db(data_dir: &str) -> Result<Option<sled::Db>> {
     let path = Path::new(data_dir).join("agg_state");
-    if !path.exists() { return Ok(None); }
+    if !path.exists() {
+        return Ok(None);
+    }
     let db = sled::open(path).map_err(|e| anyhow!("Sled open error: {}", e))?;
     Ok(Some(db))
 }
@@ -62,7 +86,10 @@ pub fn create_snapshot(data_dir: &str, output_path: &str) -> Result<()> {
     // Header
     w.write_all(SNAPSHOT_MAGIC)?;
     write_u32(&mut w, SNAPSHOT_VERSION)?;
-    let created_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     write_u64(&mut w, created_at)?;
 
     // Databases: main + optional agg_state
@@ -86,7 +113,9 @@ pub fn create_snapshot(data_dir: &str, output_path: &str) -> Result<()> {
         for tn in tree_names {
             write_u16(&mut w, tn.len() as u16)?;
             w.write_all(tn.as_ref())?;
-            let tree = db.open_tree(&tn).map_err(|e| anyhow!("open_tree error: {}", e))?;
+            let tree = db
+                .open_tree(&tn)
+                .map_err(|e| anyhow!("open_tree error: {}", e))?;
 
             // Count entries (iterating once); alternatively stream with placeholder but keep simple
             let mut entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
@@ -107,7 +136,9 @@ pub fn create_snapshot(data_dir: &str, output_path: &str) -> Result<()> {
     // Files (raft log)
     let raft_path = Path::new(data_dir).join("raft").join("log.bin");
     let mut file_count: u32 = 0;
-    if raft_path.exists() { file_count += 1; }
+    if raft_path.exists() {
+        file_count += 1;
+    }
     write_u32(&mut w, file_count)?;
     if raft_path.exists() {
         let rel = PathBuf::from("raft/log.bin");
@@ -129,10 +160,14 @@ pub fn restore_snapshot(data_dir: &str, input_path: &str, force: bool) -> Result
         // Check emptiness
         let mut is_empty = true;
         if let Ok(mut rd) = fs::read_dir(data_path) {
-            if rd.next().is_some() { is_empty = false; }
+            if rd.next().is_some() {
+                is_empty = false;
+            }
         }
         if !is_empty {
-            if !force { return Err(anyhow!("data_dir is not empty (use --force to overwrite)")); }
+            if !force {
+                return Err(anyhow!("data_dir is not empty (use --force to overwrite)"));
+            }
             fs::remove_dir_all(data_path)?;
         }
     }
@@ -144,9 +179,13 @@ pub fn restore_snapshot(data_dir: &str, input_path: &str, force: bool) -> Result
     // Header
     let mut magic = [0u8; 12];
     read_exact(&mut r, &mut magic)?;
-    if magic != SNAPSHOT_MAGIC { return Err(anyhow!("invalid snapshot magic")); }
+    if magic != SNAPSHOT_MAGIC {
+        return Err(anyhow!("invalid snapshot magic"));
+    }
     let version = read_u32(&mut r)?;
-    if version != SNAPSHOT_VERSION { return Err(anyhow!("unsupported snapshot version: {}", version)); }
+    if version != SNAPSHOT_VERSION {
+        return Err(anyhow!("unsupported snapshot version: {}", version));
+    }
     let _created_at = read_u64(&mut r)?;
 
     // Databases
@@ -161,11 +200,13 @@ pub fn restore_snapshot(data_dir: &str, input_path: &str, force: bool) -> Result
         } else if db_name == "agg_state" {
             // ensure directory exists
             fs::create_dir_all(Path::new(data_dir).join("agg_state"))?;
-            sled::open(Path::new(data_dir).join("agg_state")).map_err(|e| anyhow!("Sled open error: {}", e))?
+            sled::open(Path::new(data_dir).join("agg_state"))
+                .map_err(|e| anyhow!("Sled open error: {}", e))?
         } else {
             // Unknown DB label; create a subdir with same name
             fs::create_dir_all(Path::new(data_dir).join(&db_name))?;
-            sled::open(Path::new(data_dir).join(&db_name)).map_err(|e| anyhow!("Sled open error: {}", e))?
+            sled::open(Path::new(data_dir).join(&db_name))
+                .map_err(|e| anyhow!("Sled open error: {}", e))?
         };
 
         let tree_count = read_u32(&mut r)? as usize;
@@ -173,7 +214,9 @@ pub fn restore_snapshot(data_dir: &str, input_path: &str, force: bool) -> Result
             let tn_len = read_u16(&mut r)? as usize;
             let mut tn_buf = vec![0u8; tn_len];
             read_exact(&mut r, &mut tn_buf)?;
-            let tree = db.open_tree(&tn_buf).map_err(|e| anyhow!("open_tree error: {}", e))?;
+            let tree = db
+                .open_tree(&tn_buf)
+                .map_err(|e| anyhow!("open_tree error: {}", e))?;
 
             let entry_count = read_u64(&mut r)? as usize;
             for _ in 0..entry_count {
@@ -183,9 +226,11 @@ pub fn restore_snapshot(data_dir: &str, input_path: &str, force: bool) -> Result
                 let mut v = vec![0u8; v_len];
                 read_exact(&mut r, &mut k)?;
                 read_exact(&mut r, &mut v)?;
-                tree.insert(k, v).map_err(|e| anyhow!("tree insert error: {}", e))?;
+                tree.insert(k, v)
+                    .map_err(|e| anyhow!("tree insert error: {}", e))?;
             }
-            tree.flush().map_err(|e| anyhow!("tree flush error: {}", e))?;
+            tree.flush()
+                .map_err(|e| anyhow!("tree flush error: {}", e))?;
         }
         db.flush().map_err(|e| anyhow!("db flush error: {}", e))?;
     }
@@ -202,7 +247,9 @@ pub fn restore_snapshot(data_dir: &str, input_path: &str, force: bool) -> Result
         read_exact(&mut r, &mut content)?;
 
         let target = Path::new(data_dir).join(rel_path);
-        if let Some(parent) = target.parent() { fs::create_dir_all(parent)?; }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let mut f = File::create(&target)?;
         f.write_all(&content)?;
     }

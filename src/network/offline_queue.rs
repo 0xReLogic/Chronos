@@ -57,7 +57,10 @@ impl OfflineQueue {
             }
         }
 
-        self.memory_queue.push_back(QueuedOperation { timestamp, operation });
+        self.memory_queue.push_back(QueuedOperation {
+            timestamp,
+            operation,
+        });
         Ok(())
     }
 
@@ -82,11 +85,38 @@ mod tests {
     #[test]
     fn enqueue_and_drain_respects_max_size_drop_oldest() {
         let mut queue = OfflineQueue::new(2, OverflowStrategy::DropOldest);
-        let ts = HybridTimestamp { ts: HLC::default().new_timestamp(), node_id: 1 };
+        let ts = HybridTimestamp {
+            ts: HLC::default().new_timestamp(),
+            node_id: 1,
+        };
 
-        queue.enqueue(Operation::Delete { table: "t".into(), key: b"k1".to_vec() }, ts).unwrap();
-        queue.enqueue(Operation::Delete { table: "t".into(), key: b"k2".to_vec() }, ts).unwrap();
-        queue.enqueue(Operation::Delete { table: "t".into(), key: b"k3".to_vec() }, ts).unwrap();
+        queue
+            .enqueue(
+                Operation::Delete {
+                    table: "t".into(),
+                    key: b"k1".to_vec(),
+                },
+                ts,
+            )
+            .unwrap();
+        queue
+            .enqueue(
+                Operation::Delete {
+                    table: "t".into(),
+                    key: b"k2".to_vec(),
+                },
+                ts,
+            )
+            .unwrap();
+        queue
+            .enqueue(
+                Operation::Delete {
+                    table: "t".into(),
+                    key: b"k3".to_vec(),
+                },
+                ts,
+            )
+            .unwrap();
 
         assert_eq!(queue.len(), 2);
         let drained = queue.drain(10);
@@ -96,10 +126,27 @@ mod tests {
     #[test]
     fn enqueue_rejects_when_full_and_strategy_reject_new() {
         let mut queue = OfflineQueue::new(1, OverflowStrategy::RejectNew);
-        let ts = HybridTimestamp { ts: HLC::default().new_timestamp(), node_id: 1 };
+        let ts = HybridTimestamp {
+            ts: HLC::default().new_timestamp(),
+            node_id: 1,
+        };
 
-        queue.enqueue(Operation::Delete { table: "t".into(), key: b"k1".to_vec() }, ts).unwrap();
-        let res = queue.enqueue(Operation::Delete { table: "t".into(), key: b"k2".to_vec() }, ts);
+        queue
+            .enqueue(
+                Operation::Delete {
+                    table: "t".into(),
+                    key: b"k1".to_vec(),
+                },
+                ts,
+            )
+            .unwrap();
+        let res = queue.enqueue(
+            Operation::Delete {
+                table: "t".into(),
+                key: b"k2".to_vec(),
+            },
+            ts,
+        );
         assert!(matches!(res, Err(OfflineQueueError::QueueFull)));
     }
 }

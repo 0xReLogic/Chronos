@@ -2,9 +2,9 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::collections::VecDeque;
 
-use crate::parser::{Parser, Value};
 use crate::executor::Executor;
 use crate::network::NetworkError;
+use crate::parser::{Parser, Value};
 
 pub struct Repl {
     executor: Option<Executor>,
@@ -24,7 +24,7 @@ impl Repl {
             pending_sql: VecDeque::new(),
         }
     }
-    
+
     pub fn with_distributed_mode(leader_address: &str) -> Self {
         let mut client = crate::network::SqlClient::new(leader_address);
         if let Ok(token) = std::env::var("CHRONOS_AUTH_TOKEN") {
@@ -39,7 +39,7 @@ impl Repl {
             pending_sql: VecDeque::new(),
         }
     }
-    
+
     fn enqueue_sql(&mut self, sql: String) {
         const MAX_QUEUE: usize = 10_000;
         if self.pending_sql.len() >= MAX_QUEUE {
@@ -47,7 +47,7 @@ impl Repl {
         }
         self.pending_sql.push_back(sql);
     }
-    
+
     async fn flush_pending_for(
         client: &mut crate::network::SqlClient,
         pending_sql: &mut VecDeque<String>,
@@ -75,7 +75,7 @@ impl Repl {
         }
         Ok(())
     }
-    
+
     pub async fn run(&mut self) {
         println!("Welcome to Chronos SQL Database");
         if self.distributed_mode {
@@ -84,7 +84,7 @@ impl Repl {
             println!("Running in single-node mode");
         }
         println!("Enter SQL statements or 'exit' to quit");
-        
+
         loop {
             let readline = self.rl.readline("chronos> ");
             match readline {
@@ -92,21 +92,24 @@ impl Repl {
                     if line.trim().is_empty() {
                         continue;
                     }
-                    
+
                     let _ = self.rl.add_history_entry(line.as_str());
-                    
+
                     if line.trim().eq_ignore_ascii_case("exit") {
                         println!("Goodbye!");
                         break;
                     }
-                    
+
                     if self.distributed_mode {
                         // In distributed mode, send the SQL to the leader
                         if let Some(client) = &mut self.sql_client {
                             // Flush any queued commands first
-                            if let Err(e) = Self::flush_pending_for(client, &mut self.pending_sql).await {
+                            if let Err(e) =
+                                Self::flush_pending_for(client, &mut self.pending_sql).await
+                            {
                                 match e {
-                                    NetworkError::ConnectionError(_) | NetworkError::TransportError(_) => {
+                                    NetworkError::ConnectionError(_)
+                                    | NetworkError::TransportError(_) => {
                                         eprintln!("Network error while flushing queued commands: {e}. Command queued locally");
                                         self.enqueue_sql(line);
                                         continue;
@@ -124,20 +127,20 @@ impl Repl {
                                         eprintln!("Error: {}", response.error);
                                         continue;
                                     }
-                                    
+
                                     // Print column headers
                                     let header_width = 20;
                                     for col in &response.columns {
                                         print!("{col:header_width$}");
                                     }
                                     println!();
-                                    
+
                                     // Print separator
                                     for _ in 0..response.columns.len() {
                                         print!("{}", "-".repeat(header_width));
                                     }
                                     println!();
-                                    
+
                                     // Print rows
                                     for row in response.rows {
                                         for value in row.values {
@@ -153,10 +156,11 @@ impl Repl {
                                         }
                                         println!();
                                     }
-                                },
+                                }
                                 Err(e) => {
                                     match e {
-                                        NetworkError::ConnectionError(_) | NetworkError::TransportError(_) => {
+                                        NetworkError::ConnectionError(_)
+                                        | NetworkError::TransportError(_) => {
                                             eprintln!("Network error: {e}. Command queued locally");
                                             self.enqueue_sql(line);
                                         }
@@ -166,14 +170,17 @@ impl Repl {
                                             eprintln!("Error from leader: {e}");
                                         }
                                     }
-                                },
+                                }
                             }
                         } else {
                             eprintln!("SQL client not initialized");
                         }
                     } else {
                         // In single-node mode, execute locally
-                        let executor = self.executor.as_mut().expect("Executor not initialized in single-node mode");
+                        let executor = self
+                            .executor
+                            .as_mut()
+                            .expect("Executor not initialized in single-node mode");
                         match Parser::parse(&line) {
                             Ok(ast) => {
                                 match executor.execute(ast).await {
@@ -184,13 +191,13 @@ impl Repl {
                                             print!("{col:header_width$}");
                                         }
                                         println!();
-                                        
+
                                         // Print separator
                                         for _ in 0..result.columns.len() {
                                             print!("{}", "-".repeat(header_width));
                                         }
                                         println!();
-                                        
+
                                         // Print rows
                                         for row in result.rows {
                                             for value in row {
@@ -205,30 +212,30 @@ impl Repl {
                                             }
                                             println!();
                                         }
-                                    },
+                                    }
                                     Err(e) => {
                                         eprintln!("Error: {e}");
-                                    },
+                                    }
                                 }
-                            },
+                            }
                             Err(e) => {
                                 eprintln!("Parse error: {e}");
-                            },
+                            }
                         }
                     }
-                },
+                }
                 Err(ReadlineError::Interrupted) => {
                     println!("CTRL-C");
                     break;
-                },
+                }
                 Err(ReadlineError::Eof) => {
                     println!("CTRL-D");
                     break;
-                },
+                }
                 Err(err) => {
                     eprintln!("Error: {err}");
                     break;
-                },
+                }
             }
         }
     }

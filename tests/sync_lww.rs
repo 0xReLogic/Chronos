@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use chronos::common::timestamp::HybridTimestamp;
 use chronos::executor::Executor;
-use chronos::network::proto::{SyncOperation, SyncRequest};
 use chronos::network::proto::sync_service_server::SyncService;
+use chronos::network::proto::{SyncOperation, SyncRequest};
 use chronos::network::{SqlClient, SyncServer};
 use chronos::parser::{Parser, Value as SqlValue};
 use chronos::storage::offline_queue::PersistentQueuedOperation;
@@ -93,31 +93,21 @@ async fn edge_to_cloud_sync_basic_propagates_rows() {
 
     // Write data on the edge node.
     let mut edge_client = SqlClient::new(&edge_addr);
-    edge_client
-        .connect()
-        .await
-        .expect("edge SqlClient connect");
+    edge_client.connect().await.expect("edge SqlClient connect");
 
     edge_client
         .execute_sql("CREATE TABLE sensors (sensor_id INT, temperature FLOAT);")
         .await
         .expect("create table on edge");
 
-    let inserts = [
-        (1, 10.0_f64),
-        (2, 20.0_f64),
-        (3, 30.0_f64),
-    ];
+    let inserts = [(1, 10.0_f64), (2, 20.0_f64), (3, 30.0_f64)];
 
     for (id, temp) in inserts {
         let sql = format!(
             "INSERT INTO sensors (sensor_id, temperature) VALUES ({}, {});",
             id, temp
         );
-        edge_client
-            .execute_sql(&sql)
-            .await
-            .expect("insert on edge");
+        edge_client.execute_sql(&sql).await.expect("insert on edge");
     }
 
     // Wait for the SyncWorker on the edge to drain the offline queue and push
@@ -196,10 +186,7 @@ async fn sync_idempotent_replay_same_batch() {
         .await
         .expect("first sync RPC")
         .into_inner();
-    assert_eq!(
-        resp1.applied, 1,
-        "expected first sync to apply operation"
-    );
+    assert_eq!(resp1.applied, 1, "expected first sync to apply operation");
 
     let req2 = SyncRequest {
         edge_id,
@@ -315,10 +302,8 @@ async fn sync_delete_propagates_row_removal() {
     let edge_id = "edge_delete".to_string();
 
     {
-        let ast = Parser::parse(
-            "CREATE TABLE sensors (sensor_id INT, temperature FLOAT);",
-        )
-        .expect("parse create table");
+        let ast = Parser::parse("CREATE TABLE sensors (sensor_id INT, temperature FLOAT);")
+            .expect("parse create table");
         let mut exec = executor.lock().await;
         let _ = exec.execute(ast).await.expect("execute create table");
     }
@@ -326,8 +311,7 @@ async fn sync_delete_propagates_row_removal() {
     let mut row = StorageRow::new();
     row.insert("sensor_id".to_string(), SqlValue::Integer(1));
     row.insert("temperature".to_string(), SqlValue::Float(10.0));
-    let raw = bincode::encode_to_vec(&row, bincode::config::standard())
-        .expect("encode row");
+    let raw = bincode::encode_to_vec(&row, bincode::config::standard()).expect("encode row");
 
     let mut compressed = compress_prepend_size(&raw);
     let mut value = Vec::with_capacity(1 + compressed.len());
@@ -362,16 +346,10 @@ async fn sync_delete_propagates_row_removal() {
         },
     };
 
-    let insert_bytes = bincode::serde::encode_to_vec(
-        &insert_pq,
-        bincode::config::standard(),
-    )
-    .expect("encode insert pq");
-    let delete_bytes = bincode::serde::encode_to_vec(
-        &delete_pq,
-        bincode::config::standard(),
-    )
-    .expect("encode delete pq");
+    let insert_bytes = bincode::serde::encode_to_vec(&insert_pq, bincode::config::standard())
+        .expect("encode insert pq");
+    let delete_bytes = bincode::serde::encode_to_vec(&delete_pq, bincode::config::standard())
+        .expect("encode delete pq");
 
     let insert_op = SyncOperation {
         id: insert_pq.id,
@@ -394,15 +372,11 @@ async fn sync_delete_propagates_row_removal() {
     assert_eq!(resp1.applied, 1, "insert should be applied");
 
     {
-        let ast = Parser::parse("SELECT sensor_id, temperature FROM sensors;")
-            .expect("parse select");
+        let ast =
+            Parser::parse("SELECT sensor_id, temperature FROM sensors;").expect("parse select");
         let mut exec = executor.lock().await;
         let res = exec.execute(ast).await.expect("execute select");
-        assert_eq!(
-            res.rows.len(),
-            1,
-            "expected 1 row after insert via sync",
-        );
+        assert_eq!(res.rows.len(), 1, "expected 1 row after insert via sync",);
     }
 
     let req2 = SyncRequest {
@@ -417,15 +391,11 @@ async fn sync_delete_propagates_row_removal() {
     assert_eq!(resp2.applied, 1, "delete should be applied");
 
     {
-        let ast = Parser::parse("SELECT sensor_id, temperature FROM sensors;")
-            .expect("parse select");
+        let ast =
+            Parser::parse("SELECT sensor_id, temperature FROM sensors;").expect("parse select");
         let mut exec = executor.lock().await;
         let res = exec.execute(ast).await.expect("execute select");
-        assert_eq!(
-            res.rows.len(),
-            0,
-            "expected 0 rows after delete via sync",
-        );
+        assert_eq!(res.rows.len(), 0, "expected 0 rows after delete via sync",);
     }
 }
 
@@ -443,10 +413,8 @@ async fn sync_mixed_batch_applies_only_newer_per_key() {
     let edge_id = "edge_mixed".to_string();
 
     {
-        let ast = Parser::parse(
-            "CREATE TABLE sensors (sensor_id INT, temperature FLOAT);",
-        )
-        .expect("parse create table");
+        let ast = Parser::parse("CREATE TABLE sensors (sensor_id INT, temperature FLOAT);")
+            .expect("parse create table");
         let mut exec = executor.lock().await;
         let _ = exec.execute(ast).await.expect("execute create table");
     }
@@ -464,8 +432,7 @@ async fn sync_mixed_batch_applies_only_newer_per_key() {
     row_b.insert("temperature".to_string(), SqlValue::Float(15.0));
 
     let encode_row = |row: &StorageRow| {
-        let raw = bincode::encode_to_vec(row, bincode::config::standard())
-            .expect("encode row");
+        let raw = bincode::encode_to_vec(row, bincode::config::standard()).expect("encode row");
         let mut compressed = compress_prepend_size(&raw);
         let mut value = Vec::with_capacity(1 + compressed.len());
         value.push(1);
@@ -550,8 +517,8 @@ async fn sync_mixed_batch_applies_only_newer_per_key() {
     );
 
     {
-        let ast = Parser::parse("SELECT sensor_id, temperature FROM sensors;")
-            .expect("parse select");
+        let ast =
+            Parser::parse("SELECT sensor_id, temperature FROM sensors;").expect("parse select");
         let mut exec = executor.lock().await;
         let res = exec.execute(ast).await.expect("execute select");
         assert_eq!(
@@ -710,8 +677,8 @@ async fn sync_large_batch_is_idempotent_and_advances_cursor() {
                 value: vec![],
             },
         };
-        let data = bincode::serde::encode_to_vec(&pq, bincode::config::standard())
-            .expect("encode pq");
+        let data =
+            bincode::serde::encode_to_vec(&pq, bincode::config::standard()).expect("encode pq");
         ops.push(SyncOperation { id, data });
     }
 
@@ -771,10 +738,7 @@ async fn edge_to_cloud_lww_conflict_uses_latest_value() {
     let edge_addr = format!("127.0.0.1:{}", edge_port);
 
     let mut edge_client = SqlClient::new(&edge_addr);
-    edge_client
-        .connect()
-        .await
-        .expect("edge SqlClient connect");
+    edge_client.connect().await.expect("edge SqlClient connect");
 
     edge_client
         .execute_sql("CREATE TABLE sensors (sensor_id INT, temperature FLOAT);")
@@ -873,7 +837,10 @@ async fn edge_to_cloud_lww_conflict_uses_latest_value() {
                                 chronos::network::proto::value::Value::FloatValue(f) => *f,
                                 chronos::network::proto::value::Value::IntValue(i) => *i as f64,
                                 _ => {
-                                    println!("[LWW DEBUG] non-numeric temperature cell: {:?}", inner);
+                                    println!(
+                                        "[LWW DEBUG] non-numeric temperature cell: {:?}",
+                                        inner
+                                    );
                                     continue;
                                 }
                             };

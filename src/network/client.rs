@@ -1,24 +1,18 @@
-use std::time::Duration;
 use std::env;
 use std::fs;
 use std::str::FromStr;
+use std::time::Duration;
 use tonic::metadata::MetadataValue;
-use tonic::transport::{Channel, Endpoint, ClientTlsConfig, Certificate, Identity};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 use tonic::Request;
 
-
-use crate::raft::{RaftMessage, LogEntry};
+use crate::raft::{LogEntry, RaftMessage};
 
 use crate::network::proto::raft_service_client::RaftServiceClient;
 use crate::network::proto::sql_service_client::SqlServiceClient;
 use crate::network::proto::sync_service_client::SyncServiceClient;
 use crate::network::proto::{
-    AppendEntriesRequest,
-    RequestVoteRequest,
-    SqlRequest,
-    SyncOperation,
-    SyncRequest,
-    SyncResponse,
+    AppendEntriesRequest, RequestVoteRequest, SqlRequest, SyncOperation, SyncRequest, SyncResponse,
 };
 
 use super::proto::*;
@@ -31,19 +25,16 @@ fn tls_env_present() -> bool {
 }
 
 fn configure_tls(endpoint: Endpoint) -> Result<Endpoint, NetworkError> {
-    let cert_path = env::var("CHRONOS_TLS_CERT")
-        .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
-    let key_path = env::var("CHRONOS_TLS_KEY")
-        .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+    let cert_path =
+        env::var("CHRONOS_TLS_CERT").map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+    let key_path =
+        env::var("CHRONOS_TLS_KEY").map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
     let ca_path = env::var("CHRONOS_TLS_CA_CERT")
         .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
 
-    let cert = fs::read(cert_path)
-        .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
-    let key = fs::read(key_path)
-        .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
-    let ca = fs::read(ca_path)
-        .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+    let cert = fs::read(cert_path).map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+    let key = fs::read(key_path).map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+    let ca = fs::read(ca_path).map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
 
     let identity = Identity::from_pem(cert, key);
     let ca_cert = Certificate::from_pem(ca);
@@ -71,8 +62,8 @@ fn build_endpoint(address: &str) -> Result<Endpoint, NetworkError> {
         format!("http://{}", address)
     };
 
-    let endpoint = Endpoint::from_shared(uri)
-        .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+    let endpoint =
+        Endpoint::from_shared(uri).map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
 
     if use_tls {
         configure_tls(endpoint)
@@ -93,7 +84,7 @@ impl RaftClient {
             client: None,
         }
     }
-    
+
     pub async fn connect(&mut self) -> Result<(), NetworkError> {
         let endpoint = build_endpoint(&self.address)?;
 
@@ -102,12 +93,12 @@ impl RaftClient {
             .timeout(Duration::from_secs(5))
             .connect()
             .await?;
-        
+
         self.client = Some(RaftServiceClient::new(channel));
-        
+
         Ok(())
     }
-    
+
     pub async fn request_vote(
         &mut self,
         term: u64,
@@ -118,20 +109,22 @@ impl RaftClient {
         if self.client.is_none() {
             self.connect().await?;
         }
-        
+
         let request = RequestVoteRequest {
             term,
             candidate_id: candidate_id.to_string(),
             last_log_index,
             last_log_term,
         };
-        
-        let response = self.client.as_mut()
+
+        let response = self
+            .client
+            .as_mut()
             .ok_or_else(|| NetworkError::ConnectionError("Client not connected".to_string()))?
             .request_vote(Request::new(request))
             .await?
             .into_inner();
-        
+
         Ok(RaftMessage::RequestVoteResponse {
             term: response.term,
             vote_granted: response.vote_granted,
@@ -169,7 +162,7 @@ impl RaftClient {
             vote_granted: response.vote_granted,
         })
     }
-    
+
     pub async fn append_entries(
         &mut self,
         term: u64,
@@ -182,15 +175,16 @@ impl RaftClient {
         if self.client.is_none() {
             self.connect().await?;
         }
-        
+
         // Convert entries to proto format
-        let proto_entries = entries.into_iter()
+        let proto_entries = entries
+            .into_iter()
             .map(|e| super::proto::LogEntry {
                 term: e.term,
                 command: e.command,
             })
             .collect();
-        
+
         let request = AppendEntriesRequest {
             term,
             leader_id: leader_id.to_string(),
@@ -199,13 +193,15 @@ impl RaftClient {
             entries: proto_entries,
             leader_commit,
         };
-        
-        let response = self.client.as_mut()
+
+        let response = self
+            .client
+            .as_mut()
             .ok_or_else(|| NetworkError::ConnectionError("Client not connected".to_string()))?
             .append_entries(Request::new(request))
             .await?
             .into_inner();
-        
+
         Ok(RaftMessage::AppendEntriesResponse {
             term: response.term,
             success: response.success,
@@ -236,25 +232,22 @@ impl SqlClient {
         self.auth_token = Some(token.into());
         self
     }
-    
-    pub async fn connect(&mut self) -> Result<(), NetworkError> {
-        let endpoint = build_endpoint(&self.address)?
-            .connect_timeout(Duration::from_secs(5));
 
-        let channel = endpoint
-            .connect()
-            .await?;
-        
+    pub async fn connect(&mut self) -> Result<(), NetworkError> {
+        let endpoint = build_endpoint(&self.address)?.connect_timeout(Duration::from_secs(5));
+
+        let channel = endpoint.connect().await?;
+
         self.client = Some(SqlServiceClient::new(channel));
-        
+
         Ok(())
     }
-    
+
     pub async fn execute_sql(&mut self, sql: &str) -> Result<SqlResponse, NetworkError> {
         if self.client.is_none() {
             self.connect().await?;
         }
-        
+
         let mut request = Request::new(SqlRequest {
             sql: sql.to_string(),
         });
@@ -273,7 +266,7 @@ impl SqlClient {
             .execute_sql(request)
             .await?
             .into_inner();
-        
+
         Ok(response)
     }
 }
@@ -326,7 +319,10 @@ impl SyncClient {
             })
             .collect();
 
-        let request = SyncRequest { edge_id: edge_id.to_string(), operations: ops };
+        let request = SyncRequest {
+            edge_id: edge_id.to_string(),
+            operations: ops,
+        };
 
         let response: SyncResponse = self
             .client

@@ -1,22 +1,18 @@
 use super::{
     error::StorageError,
     offline_queue::PersistentOfflineQueue,
-    wal::{WalEntry, Operation},
-    Filter,
-    FilterOp,
-    Row,
-    StorageEngine,
-    TableSchema,
+    wal::{Operation, WalEntry},
+    Filter, FilterOp, Row, StorageEngine, TableSchema,
 };
+use crate::common::timestamp::HybridTimestamp;
+use crate::storage::compression::chimp;
 use anyhow::Result;
+use lru::LruCache;
+use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use tokio::sync::Mutex as TokioMutex;
-use lru::LruCache;
-use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
-use crate::common::timestamp::HybridTimestamp;
-use crate::storage::compression::chimp;
 
 const SCHEMA_TREE: &str = "__schemas__";
 const INDEX_META_TREE: &str = "__indexes__";
@@ -48,25 +44,29 @@ impl SledEngine {
         } else {
             let _ = std::fs::write(&ver_path, b"1\n");
         }
-        
-        let db = sled::open(&path)
-            .map_err(|e| StorageError::SledError(e.to_string()))?;
-        
+
+        let db = sled::open(&path).map_err(|e| StorageError::SledError(e.to_string()))?;
+
         log::info!("Sled storage engine initialized at {:?}", path);
-        
+
         let offline_queue = PersistentOfflineQueue::new(&db)?;
         let cache_capacity = NonZeroUsize::new(10_000).expect("non-zero cache size");
         let cache = TokioMutex::new(LruCache::new(cache_capacity));
 
-        Ok(Self { db, wal_sequence: 0, offline_queue: TokioMutex::new(offline_queue), cache })
+        Ok(Self {
+            db,
+            wal_sequence: 0,
+            offline_queue: TokioMutex::new(offline_queue),
+            cache,
+        })
     }
-    
+
     fn table_tree(&self, table_name: &str) -> Result<sled::Tree> {
         self.db
             .open_tree(format!("table:{}", table_name))
             .map_err(|e| StorageError::SledError(e.to_string()).into())
     }
-    
+
     fn schema_tree(&self) -> Result<sled::Tree> {
         self.db
             .open_tree(SCHEMA_TREE)
@@ -78,7 +78,7 @@ impl SledEngine {
             .open_tree("__wal__")
             .map_err(|e| StorageError::SledError(e.to_string()).into())
     }
-    
+
     fn index_tree(&self, table_name: &str, column: &str) -> Result<sled::Tree> {
         self.db
             .open_tree(format!("index:{}:{}", table_name, column))
@@ -118,7 +118,7 @@ impl SledEngine {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
     }
-    
+
     fn generate_row_key(&self) -> String {
         format!(
             "{:020}:{:08x}",
@@ -158,29 +158,35 @@ impl StorageEngine for SledEngine {
         self.recover_from_wal().await?;
         Ok(())
     }
-    
+
     async fn create_table(&mut self, table_name: &str, schema: TableSchema) -> Result<()> {
         let schema_tree = self.schema_tree()?;
-        
+
         if schema_tree.contains_key(table_name.as_bytes())? {
             return Err(StorageError::TableAlreadyExists(table_name.to_string()).into());
         }
-        
+
         let schema_bytes = bincode::encode_to_vec(&schema, bincode::config::standard())?;
         schema_tree.insert(table_name.as_bytes(), schema_bytes)?;
-        
+
         self.table_tree(table_name)?;
-        
-        log::info!("Created table '{}' with {} columns", table_name, schema.columns.len());
-        
+
+        log::info!(
+            "Created table '{}' with {} columns",
+            table_name,
+            schema.columns.len()
+        );
+
         Ok(())
     }
-    
+
     async fn insert(&mut self, table_name: &str, rows: Vec<Row>) -> Result<()> {
         let tree = self.table_tree(table_name)?;
         let wal_tree = self.wal_tree()?;
-        
-        let schema = self.get_schema(table_name).await?
+
+        let schema = self
+            .get_schema(table_name)
+            .await?
             .ok_or_else(|| StorageError::TableNotFound(table_name.to_string()))?;
 
         let ttl_seconds = schema.ttl_seconds;
@@ -189,7 +195,7 @@ impl StorageEngine for SledEngine {
         } else {
             None
         };
-        
+
         let row_count = rows.len();
         // Optional: accumulate FLOAT column values per column for Chimp series
         let do_chimp = Self::chimp_enabled();
@@ -212,10 +218,11 @@ impl StorageEngine for SledEngine {
                     return Err(StorageError::ColumnNotFound(
                         col.name.clone(),
                         table_name.to_string(),
-                    ).into());
+                    )
+                    .into());
                 }
             }
-            
+
             let key = self.generate_row_key();
             let raw_value = bincode::encode_to_vec(&row, bincode::config::standard())?;
             let value = compress_row(&raw_value)?;
@@ -239,7 +246,8 @@ impl StorageEngine for SledEngine {
 
             let entry = WalEntry::new(self.wal_sequence, ts, op, 0);
             let wal_bytes = bincode::serde::encode_to_vec(&entry, bincode::config::standard())?;
-            wal_tree.insert(self.wal_sequence.to_be_bytes(), wal_bytes)
+            wal_tree
+                .insert(self.wal_sequence.to_be_bytes(), wal_bytes)
                 .map_err(|e| StorageError::SledError(e.to_string()))?;
 
             tree.insert(key.as_bytes(), value)?;
@@ -269,11 +277,7 @@ impl StorageEngine for SledEngine {
 
                 if let Some(col_value) = row.get(&col.name) {
                     let index_tree = self.index_tree(table_name, &col.name)?;
-                    let index_key = format!(
-                        "{}:{}",
-                        serde_json::to_string(col_value)?,
-                        &key
-                    );
+                    let index_key = format!("{}:{}", serde_json::to_string(col_value)?, &key);
                     index_tree
                         .insert(index_key.as_bytes(), key.as_bytes())
                         .map_err(|e| StorageError::SledError(e.to_string()))?;
@@ -289,10 +293,13 @@ impl StorageEngine for SledEngine {
                 }
             }
         }
-        
-        wal_tree.flush_async().await
+
+        wal_tree
+            .flush_async()
+            .await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
-        tree.flush_async().await
+        tree.flush_async()
+            .await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
 
         if let Some(ttl_tree) = ttl_tree {
@@ -305,7 +312,9 @@ impl StorageEngine for SledEngine {
         if do_chimp && !chimp_acc.is_empty() {
             let meta = self.series_meta_tree()?;
             for (col, vals) in chimp_acc {
-                if vals.is_empty() { continue; }
+                if vals.is_empty() {
+                    continue;
+                }
                 let enc = chimp::encode_series(&vals);
                 let series = self.series_tree(table_name, &col)?;
                 // Meta key: series:chimp:{table}:{col}:next
@@ -322,25 +331,23 @@ impl StorageEngine for SledEngine {
                 series
                     .insert(new_id.to_be_bytes(), enc)
                     .map_err(|e| StorageError::SledError(e.to_string()))?;
-                meta
-                    .insert(meta_key.as_bytes(), &new_id.to_be_bytes())
+                meta.insert(meta_key.as_bytes(), &new_id.to_be_bytes())
                     .map_err(|e| StorageError::SledError(e.to_string()))?;
                 series
                     .flush_async()
                     .await
                     .map_err(|e| StorageError::SledError(e.to_string()))?;
             }
-            meta
-                .flush_async()
+            meta.flush_async()
                 .await
                 .map_err(|e| StorageError::SledError(e.to_string()))?;
         }
-        
+
         log::debug!("Inserted {} rows into table '{}'", row_count, table_name);
-        
+
         Ok(())
     }
-    
+
     async fn query(&self, table_name: &str, filter: Option<Filter>) -> Result<Vec<Row>> {
         let tree = self.table_tree(table_name)?;
         let mut results = Vec::new();
@@ -360,8 +367,8 @@ impl StorageEngine for SledEngine {
                         let prefix = serde_json::to_string(&f.value)?;
 
                         for item in index_tree.scan_prefix(prefix.as_bytes()) {
-                            let (_index_key, row_key) = item
-                                .map_err(|e| StorageError::SledError(e.to_string()))?;
+                            let (_index_key, row_key) =
+                                item.map_err(|e| StorageError::SledError(e.to_string()))?;
 
                             let cache_key = (table_name.to_string(), row_key.to_vec());
 
@@ -383,8 +390,10 @@ impl StorageEngine for SledEngine {
                                     None => continue,
                                 };
                                 let value = decompress_row(&stored)?;
-                                let (row, _): (Row, usize) =
-                                    bincode::decode_from_slice(&value, bincode::config::standard())?;
+                                let (row, _): (Row, usize) = bincode::decode_from_slice(
+                                    &value,
+                                    bincode::config::standard(),
+                                )?;
 
                                 // Insert into cache
                                 {
@@ -437,17 +446,23 @@ impl StorageEngine for SledEngine {
             results.push(row);
         }
 
-        log::debug!("Query returned {} rows from table '{}'", results.len(), table_name);
+        log::debug!(
+            "Query returned {} rows from table '{}'",
+            results.len(),
+            table_name
+        );
 
         Ok(results)
     }
-    
+
     async fn delete(&mut self, table_name: &str, filter: Filter) -> Result<usize> {
         let tree = self.table_tree(table_name)?;
         let mut deleted = 0;
-        
+
         // Discover which columns have indexes for this table (if any)
-        let schema = self.get_schema(table_name).await?
+        let schema = self
+            .get_schema(table_name)
+            .await?
             .ok_or_else(|| StorageError::TableNotFound(table_name.to_string()))?;
         let index_meta = self.index_meta_tree()?;
         let mut indexed_columns: Vec<String> = Vec::new();
@@ -468,7 +483,7 @@ impl StorageEngine for SledEngine {
             let value = decompress_row(&stored)?;
             let (row, _): (Row, usize) =
                 bincode::decode_from_slice(&value, bincode::config::standard())?;
-            
+
             if filter.matches(&row) {
                 to_delete.push(key.clone());
                 if !indexed_columns.is_empty() {
@@ -483,11 +498,7 @@ impl StorageEngine for SledEngine {
             for col_name in &indexed_columns {
                 if let Some(col_value) = row.get(col_name) {
                     let index_tree = self.index_tree(table_name, col_name)?;
-                    let index_key = format!(
-                        "{}:{}",
-                        serde_json::to_string(col_value)?,
-                        key_str
-                    );
+                    let index_key = format!("{}:{}", serde_json::to_string(col_value)?, key_str);
                     index_tree
                         .remove(index_key.as_bytes())
                         .map_err(|e| StorageError::SledError(e.to_string()))?;
@@ -509,15 +520,16 @@ impl StorageEngine for SledEngine {
             tree.remove(key)?;
             deleted += 1;
         }
-        
-        tree.flush_async().await
+
+        tree.flush_async()
+            .await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
-        
+
         log::info!("Deleted {} rows from table '{}'", deleted, table_name);
-        
+
         Ok(deleted)
     }
-    
+
     async fn create_index(&mut self, table_name: &str, column: &str) -> Result<()> {
         let table_tree = self.table_tree(table_name)?;
         let index_tree = self.index_tree(table_name, column)?;
@@ -551,48 +563,57 @@ impl StorageEngine for SledEngine {
             .insert(meta_key.as_bytes(), &[])
             .map_err(|e| StorageError::SledError(e.to_string()))?;
 
-        log::info!("Created index on column '{}' for table '{}'", column, table_name);
+        log::info!(
+            "Created index on column '{}' for table '{}'",
+            column,
+            table_name
+        );
 
         Ok(())
     }
-    
+
     async fn get_schema(&self, table_name: &str) -> Result<Option<TableSchema>> {
         let schema_tree = self.schema_tree()?;
-        
+
         match schema_tree.get(table_name.as_bytes())? {
             Some(schema_bytes) => {
-                let (schema, _): (TableSchema, usize) = bincode::decode_from_slice(&schema_bytes, bincode::config::standard())?;
+                let (schema, _): (TableSchema, usize) =
+                    bincode::decode_from_slice(&schema_bytes, bincode::config::standard())?;
                 Ok(Some(schema))
             }
             None => Ok(None),
         }
     }
-    
+
     async fn list_tables(&self) -> Result<Vec<String>> {
         let schema_tree = self.schema_tree()?;
         let mut tables = Vec::new();
-        
+
         for item in schema_tree.iter() {
             let (key, _) = item.map_err(|e| StorageError::SledError(e.to_string()))?;
             let table_name = String::from_utf8_lossy(&key).to_string();
             tables.push(table_name);
         }
-        
+
         Ok(tables)
     }
-    
+
     async fn checkpoint(&mut self) -> Result<()> {
-        self.db.flush_async().await
+        self.db
+            .flush_async()
+            .await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
-        
+
         log::debug!("Checkpoint completed for sled storage");
         Ok(())
     }
-    
+
     async fn close(&mut self) -> Result<()> {
-        self.db.flush_async().await
+        self.db
+            .flush_async()
+            .await
             .map_err(|e| StorageError::SledError(e.to_string()))?;
-        
+
         log::info!("Sled storage engine closed");
         Ok(())
     }
@@ -695,11 +716,8 @@ impl StorageEngine for SledEngine {
                 for col_name in &indexed_cols {
                     if let Some(col_value) = row.get(col_name) {
                         let index_tree = self.index_tree(&table_name, col_name)?;
-                        let index_key = format!(
-                            "{}:{}",
-                            serde_json::to_string(col_value)?,
-                            row_key_str
-                        );
+                        let index_key =
+                            format!("{}:{}", serde_json::to_string(col_value)?, row_key_str);
                         index_tree
                             .remove(index_key.as_bytes())
                             .map_err(|e| StorageError::SledError(e.to_string()))?;
@@ -731,12 +749,20 @@ impl StorageEngine for SledEngine {
         Ok(deleted_rows)
     }
 
-    async fn drain_offline_queue(&self, limit: usize) -> Result<Vec<crate::storage::offline_queue::PersistentQueuedOperation>> {
+    async fn drain_offline_queue(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<crate::storage::offline_queue::PersistentQueuedOperation>> {
         let mut queue = self.offline_queue.lock().await;
-        queue.drain(limit).map_err(|e| StorageError::SledError(e.to_string()).into())
+        queue
+            .drain(limit)
+            .map_err(|e| StorageError::SledError(e.to_string()).into())
     }
 
-    async fn requeue_offline_ops(&self, ops: Vec<crate::storage::offline_queue::PersistentQueuedOperation>) -> Result<()> {
+    async fn requeue_offline_ops(
+        &self,
+        ops: Vec<crate::storage::offline_queue::PersistentQueuedOperation>,
+    ) -> Result<()> {
         let mut queue = self.offline_queue.lock().await;
         for op in ops {
             queue.enqueue(op.timestamp, op.operation)?;
@@ -871,14 +897,14 @@ impl SledEngine {
 mod tests {
     use super::*;
     use crate::parser::Value;
-    use crate::storage::{Column, DataType, TableSchema, Filter, FilterOp};
+    use crate::storage::{Column, DataType, Filter, FilterOp, TableSchema};
     use tempfile::TempDir;
-    
+
     #[tokio::test]
     async fn test_sled_create_table() {
         let temp_dir = TempDir::new().unwrap();
         let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap()).unwrap();
-        
+
         let schema = TableSchema {
             name: "users".to_string(),
             columns: vec![
@@ -893,18 +919,18 @@ mod tests {
             ],
             ttl_seconds: None,
         };
-        
+
         engine.create_table("users", schema).await.unwrap();
-        
+
         let retrieved = engine.get_schema("users").await.unwrap().unwrap();
         assert_eq!(retrieved.columns.len(), 2);
     }
-    
+
     #[tokio::test]
     async fn test_sled_insert_query() {
         let temp_dir = TempDir::new().unwrap();
         let mut engine = SledEngine::new(temp_dir.path().to_str().unwrap()).unwrap();
-        
+
         let schema = TableSchema {
             name: "sensors".to_string(),
             columns: vec![
@@ -919,15 +945,15 @@ mod tests {
             ],
             ttl_seconds: None,
         };
-        
+
         engine.create_table("sensors", schema).await.unwrap();
-        
+
         let mut row = Row::new();
         row.insert("sensor_id".to_string(), Value::Integer(1));
         row.insert("temperature".to_string(), Value::Float(25.5));
-        
+
         engine.insert("sensors", vec![row]).await.unwrap();
-        
+
         let results = engine.query("sensors", None).await.unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -1016,7 +1042,10 @@ mod tests {
         row3.insert("sensor_id".to_string(), Value::Integer(1));
         row3.insert("temperature".to_string(), Value::Float(26.0));
 
-        engine.insert("sensors", vec![row1, row2, row3]).await.unwrap();
+        engine
+            .insert("sensors", vec![row1, row2, row3])
+            .await
+            .unwrap();
 
         // Create an index on sensor_id
         engine.create_index("sensors", "sensor_id").await.unwrap();
@@ -1122,10 +1151,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let cleaned = engine
-            .cleanup_expired(now_secs + 3600, 1000)
-            .await
-            .unwrap();
+        let cleaned = engine.cleanup_expired(now_secs + 3600, 1000).await.unwrap();
         assert_eq!(cleaned, 3);
 
         // After cleanup, no rows should be visible via full scan...

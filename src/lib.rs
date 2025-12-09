@@ -1,18 +1,18 @@
 // Phase 1: Single-node engine modules
-pub mod parser;
-pub mod executor;
-pub mod raft;
-pub mod storage;
 pub mod config;
-pub mod repl;
 pub mod embedded;
+pub mod executor;
+pub mod parser;
+pub mod raft;
+pub mod repl;
+pub mod storage;
 
 // Phase 2: Distributed engine modules
-pub mod network;
 pub mod common;
+pub mod network;
 
 // Public exports
-pub use parser::Parser;
-pub use executor::{Executor, QueryResult};
 pub use embedded::ChronosEmbedded;
-pub use storage::{StorageEngine, StorageConfig};
+pub use executor::{Executor, QueryResult};
+pub use parser::Parser;
+pub use storage::{StorageConfig, StorageEngine};

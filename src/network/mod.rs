@@ -31,19 +31,19 @@ impl std::fmt::Display for NetworkError {
 impl std::error::Error for NetworkError {}
 
 pub mod client;
-pub mod server;
 pub mod connectivity;
-pub mod offline_queue;
-pub mod sync_worker;
-pub mod sync_status;
-pub mod metrics;
 pub mod http_admin;
+pub mod metrics;
+pub mod offline_queue;
+pub mod server;
+pub mod sync_status;
+pub mod sync_worker;
 
 pub use connectivity::*;
 pub use offline_queue::*;
 pub use server::{HealthServer, SyncServer, SyncStatusServer};
-pub use sync_worker::SyncWorker;
 pub use sync_status::{SharedSyncStatus, SyncStatusState};
+pub use sync_worker::SyncWorker;
 
 pub mod proto {
     tonic::include_proto!("raft");

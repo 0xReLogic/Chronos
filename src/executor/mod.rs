@@ -3,11 +3,17 @@ mod error;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tokio::sync::Mutex;
-use crate::parser::{Ast, Statement, Value, ColumnDefinition, DataType as ParserDataType, Condition, Operator, TtlSpec};
-use crate::storage::{create_storage_engine, StorageEngine, StorageConfig, TableSchema, Column, DataType, Row, Filter, FilterOp};
-use crate::storage::offline_queue::PersistentQueuedOperation;
 use crate::common::timestamp::HybridTimestamp;
+use crate::parser::{
+    Ast, ColumnDefinition, Condition, DataType as ParserDataType, Operator, Statement, TtlSpec,
+    Value,
+};
+use crate::storage::offline_queue::PersistentQueuedOperation;
+use crate::storage::{
+    create_storage_engine, Column, DataType, Filter, FilterOp, Row, StorageConfig, StorageEngine,
+    TableSchema,
+};
+use tokio::sync::Mutex;
 
 pub use self::error::ExecutorError;
 
@@ -219,9 +225,11 @@ pub struct Executor {
 
 impl Executor {
     pub async fn new(data_dir: &str) -> Self {
-        let config = StorageConfig::Sled { data_dir: data_dir.to_string() };
+        let config = StorageConfig::Sled {
+            data_dir: data_dir.to_string(),
+        };
         let mut storage = create_storage_engine(config).expect("Failed to create storage engine");
-        
+
         // Initialize storage
         storage.init().await.expect("Failed to initialize storage");
 
@@ -245,7 +253,7 @@ impl Executor {
 
         this
     }
-    
+
     pub fn set_raft_node(&mut self, node: std::sync::Weak<Mutex<crate::raft::RaftNode>>) {
         self.raft_node = Some(node);
     }
@@ -273,19 +281,20 @@ impl Executor {
             .as_secs();
         self.agg_state.avg_last_7d(table, column, now_secs)
     }
-    
+
     pub async fn execute(&mut self, ast: Ast) -> Result<QueryResult, ExecutorError> {
         // In a distributed setting, we should check if this is a read-only query
         // Read-only queries can be executed directly, but write queries should go through Raft
-        let is_read_only = matches!(&ast,
+        let is_read_only = matches!(
+            &ast,
             Ast::Statement(
                 Statement::Select { .. }
-                | Statement::SelectAgg1h { .. }
-                | Statement::SelectAgg24h { .. }
-                | Statement::SelectAgg7d { .. }
+                    | Statement::SelectAgg1h { .. }
+                    | Statement::SelectAgg24h { .. }
+                    | Statement::SelectAgg7d { .. }
             )
         );
-        
+
         if is_read_only {
             // Read-only queries: if in distributed mode, prefer serving on the leader.
             if let Some(node_weak) = &self.raft_node {
@@ -313,28 +322,32 @@ impl Executor {
                         let node = node.lock().await;
                         node.is_leader()
                     };
-                    
+
                     // Check if this node is the leader
                     if !is_leader {
                         return Err(ExecutorError::ExecutionError("Not the leader".to_string()));
                     }
-                    
+
                     // Serialize the command
                     let command = bincode::encode_to_vec(&ast, bincode::config::standard())
-                        .map_err(|e| ExecutorError::ExecutionError(format!("Serialization error: {e}")))?;
-                    
+                        .map_err(|e| {
+                            ExecutorError::ExecutionError(format!("Serialization error: {e}"))
+                        })?;
+
                     // Submit to Raft and wait for the log entry to be
                     // committed and applied locally on the leader. This
                     // ensures the write is durably replicated before we
                     // return to the client.
                     let rx = {
                         let mut node = node.lock().await;
-                        node.submit_command(command)
-                            .map_err(|e| ExecutorError::ExecutionError(format!("Raft error: {e}")))?
+                        node.submit_command(command).map_err(|e| {
+                            ExecutorError::ExecutionError(format!("Raft error: {e}"))
+                        })?
                     };
 
-                    rx.await
-                        .map_err(|e| ExecutorError::ExecutionError(format!("Raft commit wait error: {e}")))?;
+                    rx.await.map_err(|e| {
+                        ExecutorError::ExecutionError(format!("Raft commit wait error: {e}"))
+                    })?;
 
                     // Once committed and applied via the Raft state machine,
                     // we can execute a read-only view if needed. For now,
@@ -342,7 +355,9 @@ impl Executor {
                     Ok(QueryResult::empty())
                 } else {
                     // Raft node has been dropped
-                    Err(ExecutorError::ExecutionError("Raft node not available".to_string()))
+                    Err(ExecutorError::ExecutionError(
+                        "Raft node not available".to_string(),
+                    ))
                 }
             } else {
                 // No Raft node, execute directly (single-node mode)
@@ -352,12 +367,14 @@ impl Executor {
             }
         }
     }
-    
+
     // This method is called by the Raft state machine when a command is committed
     pub async fn apply_command(&mut self, command: &[u8]) -> Result<(), ExecutorError> {
         // Deserialize the command
-        let (ast, _): (Ast, usize) = bincode::decode_from_slice(command, bincode::config::standard())
-            .map_err(|e| ExecutorError::ExecutionError(format!("Deserialization error: {e}")))?;
+        let (ast, _): (Ast, usize) =
+            bincode::decode_from_slice(command, bincode::config::standard()).map_err(|e| {
+                ExecutorError::ExecutionError(format!("Deserialization error: {e}"))
+            })?;
         if let Ast::Statement(Statement::CreateTable { table_name, .. }) = &ast {
             let schema_exists = self
                 .storage
@@ -376,12 +393,14 @@ impl Executor {
             }
         }
     }
-    
-        async fn execute_statement(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
+
+    async fn execute_statement(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
         match stmt {
             Statement::Begin => {
                 if self.in_transaction {
-                    return Err(ExecutorError::ExecutionError("Already in a transaction".to_string()));
+                    return Err(ExecutorError::ExecutionError(
+                        "Already in a transaction".to_string(),
+                    ));
                 }
                 self.in_transaction = true;
                 self.transaction_buffer.clear();
@@ -389,10 +408,12 @@ impl Executor {
                     columns: vec!["result".to_string()],
                     rows: vec![vec![Value::String("Transaction started".to_string())]],
                 })
-            },
+            }
             Statement::Commit => {
                 if !self.in_transaction {
-                    return Err(ExecutorError::ExecutionError("Not in a transaction".to_string()));
+                    return Err(ExecutorError::ExecutionError(
+                        "Not in a transaction".to_string(),
+                    ));
                 }
 
                 // To avoid borrow checker issues (E0499), we first collect the statements
@@ -411,10 +432,12 @@ impl Executor {
                     columns: vec!["result".to_string()],
                     rows: vec![vec![Value::String("Transaction committed".to_string())]],
                 })
-            },
+            }
             Statement::Rollback => {
                 if !self.in_transaction {
-                    return Err(ExecutorError::ExecutionError("Not in a transaction".to_string()));
+                    return Err(ExecutorError::ExecutionError(
+                        "Not in a transaction".to_string(),
+                    ));
                 }
                 self.in_transaction = false;
                 self.transaction_buffer.clear();
@@ -422,7 +445,7 @@ impl Executor {
                     columns: vec!["result".to_string()],
                     rows: vec![vec![Value::String("Transaction rolled back".to_string())]],
                 })
-            },
+            }
             // For any other statement
             _ => {
                 if self.in_transaction {
@@ -443,19 +466,31 @@ impl Executor {
     /// Executes a statement directly against the storage engine, bypassing transaction logic.
     async fn execute_immediate(&mut self, stmt: Statement) -> Result<QueryResult, ExecutorError> {
         match stmt {
-            Statement::CreateTable { table_name, columns, ttl } => {
+            Statement::CreateTable {
+                table_name,
+                columns,
+                ttl,
+            } => {
                 let schema = self.convert_to_table_schema(&table_name, &columns, ttl);
-                
-                self.storage.create_table(&table_name, schema).await
+
+                self.storage
+                    .create_table(&table_name, schema)
+                    .await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
-                
+
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
                     rows: vec![vec![Value::String(format!("Table {table_name} created"))]],
                 })
-            },
-            Statement::Insert { table_name, columns, values } => {
-                let row = self.convert_to_row(&table_name, columns.as_deref(), &values).await?;
+            }
+            Statement::Insert {
+                table_name,
+                columns,
+                values,
+            } => {
+                let row = self
+                    .convert_to_row(&table_name, columns.as_deref(), &values)
+                    .await?;
                 let now_secs = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
@@ -464,74 +499,115 @@ impl Executor {
                 self.agg_state.update_row(&table_name, now_secs, &row);
                 self.persist_agg_buckets(&table_name, now_secs, &row);
 
-                self.storage.insert(&table_name, vec![row]).await
+                self.storage
+                    .insert(&table_name, vec![row])
+                    .await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
-                
+
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
                     rows: vec![vec![Value::String(format!("Inserted into {table_name}"))]],
                 })
-            },
-            Statement::Select { table_name, columns, conditions } => {
+            }
+            Statement::Select {
+                table_name,
+                columns,
+                conditions,
+            } => {
                 let filter = self.convert_to_filter(conditions.as_ref());
-                
-                let rows = self.storage.query(&table_name, filter).await
+
+                let rows = self
+                    .storage
+                    .query(&table_name, filter)
+                    .await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
-                
+
                 self.convert_rows_to_query_result(&columns, rows)
-            },
-            Statement::Update { table_name, assignments, conditions } => {
+            }
+            Statement::Update {
+                table_name,
+                assignments,
+                conditions,
+            } => {
                 // Simplified: fetch, modify, delete old, insert new
                 let filter = self.convert_to_filter(conditions.as_ref());
-                
-                let mut rows = self.storage.query(&table_name, filter.clone()).await
+
+                let mut rows = self
+                    .storage
+                    .query(&table_name, filter.clone())
+                    .await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
-                
+
                 // Apply assignments
                 for row in &mut rows {
                     for assignment in &assignments {
-                        row.values.insert(assignment.column_name.clone(), assignment.value.clone());
+                        row.values
+                            .insert(assignment.column_name.clone(), assignment.value.clone());
                     }
                 }
-                
+
                 // Delete old rows if filter exists
                 if let Some(f) = filter {
-                    self.storage.delete(&table_name, f).await
+                    self.storage
+                        .delete(&table_name, f)
+                        .await
                         .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
                 }
-                
+
                 // Insert updated rows
-                self.storage.insert(&table_name, rows).await
+                self.storage
+                    .insert(&table_name, rows)
+                    .await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
                     rows: vec![vec![Value::String(format!("Updated rows in {table_name}"))]],
                 })
-            },
-            Statement::Delete { table_name, conditions } => {
-                let filter = self.convert_to_filter(conditions.as_ref())
-                    .ok_or_else(|| ExecutorError::ExecutionError("DELETE requires WHERE clause".to_string()))?;
-                
-                let deleted = self.storage.delete(&table_name, filter).await
+            }
+            Statement::Delete {
+                table_name,
+                conditions,
+            } => {
+                let filter = self.convert_to_filter(conditions.as_ref()).ok_or_else(|| {
+                    ExecutorError::ExecutionError("DELETE requires WHERE clause".to_string())
+                })?;
+
+                let deleted = self
+                    .storage
+                    .delete(&table_name, filter)
+                    .await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Deleted {deleted} rows from {table_name}"))]],
+                    rows: vec![vec![Value::String(format!(
+                        "Deleted {deleted} rows from {table_name}"
+                    ))]],
                 })
-            },
-            Statement::CreateIndex { index_name: _, table_name, column_name } => {
-                self.storage.create_index(&table_name, &column_name).await
+            }
+            Statement::CreateIndex {
+                index_name: _,
+                table_name,
+                column_name,
+            } => {
+                self.storage
+                    .create_index(&table_name, &column_name)
+                    .await
                     .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
 
                 Ok(QueryResult {
                     columns: vec!["result".to_string()],
-                    rows: vec![vec![Value::String(format!("Index created on {table_name}.{column_name}"))]],
+                    rows: vec![vec![Value::String(format!(
+                        "Index created on {table_name}.{column_name}"
+                    ))]],
                 })
-            },
+            }
 
-            Statement::SelectAgg1h { table_name, column_name } => {
+            Statement::SelectAgg1h {
+                table_name,
+                column_name,
+            } => {
                 let col_label = format!("avg_1h({})", column_name);
                 let value = self
                     .avg_last_1h(&table_name, &column_name)
@@ -544,7 +620,10 @@ impl Executor {
                 })
             }
 
-            Statement::SelectAgg24h { table_name, column_name } => {
+            Statement::SelectAgg24h {
+                table_name,
+                column_name,
+            } => {
                 let col_label = format!("avg_24h({})", column_name);
                 let value = self
                     .avg_last_24h(&table_name, &column_name)
@@ -557,7 +636,10 @@ impl Executor {
                 })
             }
 
-            Statement::SelectAgg7d { table_name, column_name } => {
+            Statement::SelectAgg7d {
+                table_name,
+                column_name,
+            } => {
                 let col_label = format!("avg_7d({})", column_name);
                 let value = self
                     .avg_last_7d(&table_name, &column_name)
@@ -572,11 +654,13 @@ impl Executor {
 
             // Transaction statements should not reach here
             Statement::Begin | Statement::Commit | Statement::Rollback => {
-                Err(ExecutorError::ExecutionError("Cannot execute transaction control statements directly".to_string()))
+                Err(ExecutorError::ExecutionError(
+                    "Cannot execute transaction control statements directly".to_string(),
+                ))
             }
         }
     }
-    
+
     // Helper conversion methods
     fn convert_to_table_schema(
         &self,
@@ -602,13 +686,23 @@ impl Executor {
         }
     }
 
-    async fn convert_to_row(&self, table_name: &str, columns: Option<&[String]>, values: &[Value]) -> Result<Row, ExecutorError> {
-        let schema = self.storage.get_schema(table_name).await
+    async fn convert_to_row(
+        &self,
+        table_name: &str,
+        columns: Option<&[String]>,
+        values: &[Value],
+    ) -> Result<Row, ExecutorError> {
+        let schema = self
+            .storage
+            .get_schema(table_name)
+            .await
             .map_err(|e| ExecutorError::StorageError(e.to_string()))?
-            .ok_or_else(|| ExecutorError::ExecutionError(format!("Table {table_name} not found")))?;
-        
+            .ok_or_else(|| {
+                ExecutorError::ExecutionError(format!("Table {table_name} not found"))
+            })?;
+
         let mut row = Row::new();
-        
+
         if let Some(cols) = columns {
             for (i, col_name) in cols.iter().enumerate() {
                 if i < values.len() {
@@ -622,10 +716,10 @@ impl Executor {
                 }
             }
         }
-        
+
         Ok(row)
     }
-    
+
     fn convert_to_filter(&self, conditions: Option<&Vec<Condition>>) -> Option<Filter> {
         conditions?.first().map(|cond| Filter {
             column: cond.column_name.clone(),
@@ -640,8 +734,12 @@ impl Executor {
             value: cond.value.clone(),
         })
     }
-    
-    fn convert_rows_to_query_result(&self, columns: &[String], rows: Vec<Row>) -> Result<QueryResult, ExecutorError> {
+
+    fn convert_rows_to_query_result(
+        &self,
+        columns: &[String],
+        rows: Vec<Row>,
+    ) -> Result<QueryResult, ExecutorError> {
         let col_names = if columns.contains(&"*".to_string()) || columns.is_empty() {
             if let Some(first_row) = rows.first() {
                 first_row.values.keys().cloned().collect()
@@ -651,27 +749,37 @@ impl Executor {
         } else {
             columns.to_vec()
         };
-        
-        let result_rows: Vec<Vec<Value>> = rows.iter().map(|row| {
-            col_names.iter().filter_map(|col| {
-                row.get(col).cloned()
-            }).collect()
-        }).collect();
-        
+
+        let result_rows: Vec<Vec<Value>> = rows
+            .iter()
+            .map(|row| {
+                col_names
+                    .iter()
+                    .filter_map(|col| row.get(col).cloned())
+                    .collect()
+            })
+            .collect();
+
         Ok(QueryResult {
             columns: col_names,
             rows: result_rows,
         })
     }
 
-    pub async fn drain_offline_queue(&self, limit: usize) -> Result<Vec<PersistentQueuedOperation>, ExecutorError> {
+    pub async fn drain_offline_queue(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PersistentQueuedOperation>, ExecutorError> {
         self.storage
             .drain_offline_queue(limit)
             .await
             .map_err(|e| ExecutorError::StorageError(e.to_string()))
     }
 
-    pub async fn requeue_offline_ops(&self, ops: Vec<PersistentQueuedOperation>) -> Result<(), ExecutorError> {
+    pub async fn requeue_offline_ops(
+        &self,
+        ops: Vec<PersistentQueuedOperation>,
+    ) -> Result<(), ExecutorError> {
         self.storage
             .requeue_offline_ops(ops)
             .await
@@ -688,7 +796,11 @@ impl Executor {
             .map_err(|e| ExecutorError::StorageError(e.to_string()))
     }
 
-    pub async fn cleanup_expired(&mut self, now_secs: u64, limit: usize) -> Result<u64, ExecutorError> {
+    pub async fn cleanup_expired(
+        &mut self,
+        now_secs: u64,
+        limit: usize,
+    ) -> Result<u64, ExecutorError> {
         self.storage
             .cleanup_expired(now_secs, limit)
             .await
@@ -823,7 +935,9 @@ impl Executor {
 
         for (col_name, value) in &row.values {
             if let Value::Float(_) = value {
-                let Some(col_state) = table_state.columns.get(col_name) else { continue };
+                let Some(col_state) = table_state.columns.get(col_name) else {
+                    continue;
+                };
 
                 Self::persist_window(
                     &self.agg_tree,

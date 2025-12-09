@@ -7,12 +7,24 @@ pub struct BitWriter {
 }
 
 impl BitWriter {
-    pub fn new() -> Self { Self { buf: Vec::new(), cur: 0, nbits: 0 } }
+    pub fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            cur: 0,
+            nbits: 0,
+        }
+    }
     pub fn write_bit(&mut self, bit: bool) {
         self.cur <<= 1;
-        if bit { self.cur |= 1; }
+        if bit {
+            self.cur |= 1;
+        }
         self.nbits += 1;
-        if self.nbits == 8 { self.buf.push(self.cur); self.cur = 0; self.nbits = 0; }
+        if self.nbits == 8 {
+            self.buf.push(self.cur);
+            self.cur = 0;
+            self.nbits = 0;
+        }
     }
     pub fn write_u64_bits(&mut self, x: u64) {
         for i in (0..64).rev() {
@@ -30,7 +42,9 @@ impl BitWriter {
 }
 
 impl Default for BitWriter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct BitReader<'a> {
@@ -42,7 +56,12 @@ pub struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     pub fn new(buf: &'a [u8]) -> Self {
-        let mut r = Self { buf, idx: 0, cur: 0, nbits: 0 };
+        let mut r = Self {
+            buf,
+            idx: 0,
+            cur: 0,
+            nbits: 0,
+        };
         r.refresh();
         r
     }
@@ -54,18 +73,22 @@ impl<'a> BitReader<'a> {
         }
     }
     pub fn read_bit(&mut self) -> io::Result<bool> {
-        if self.nbits == 0 { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "no more bits")); }
+        if self.nbits == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "no more bits"));
+        }
         let b = (self.cur & 0x80) != 0;
         self.cur <<= 1;
         self.nbits -= 1;
-        if self.nbits == 0 { self.refresh(); }
+        if self.nbits == 0 {
+            self.refresh();
+        }
         Ok(b)
     }
     pub fn read_u64_bits(&mut self) -> io::Result<u64> {
         let mut x = 0u64;
         for _ in 0..64 {
             x <<= 1;
-            x |= if self.read_bit()? {1} else {0};
+            x |= if self.read_bit()? { 1 } else { 0 };
         }
         Ok(x)
     }
@@ -107,12 +130,21 @@ pub fn decode_series(buf: &[u8]) -> io::Result<Vec<f64>> {
     for i in 0..count {
         let bit = r.read_bit()?;
         let bits = if i == 0 {
-            if !bit { return Err(io::Error::new(io::ErrorKind::InvalidData, "first value must be full")); }
-            let b = r.read_u64_bits()?; prev_bits = b; b
+            if !bit {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "first value must be full",
+                ));
+            }
+            let b = r.read_u64_bits()?;
+            prev_bits = b;
+            b
         } else if !bit {
             prev_bits
         } else {
-            let b = r.read_u64_bits()?; prev_bits = b; b
+            let b = r.read_u64_bits()?;
+            prev_bits = b;
+            b
         };
         out.push(f64::from_bits(bits));
     }
@@ -124,10 +156,20 @@ mod tests {
     use super::*;
     #[test]
     fn roundtrip_simple_series() {
-        let vals = vec![1.0, 1.0, 2.5, 2.5, std::f64::consts::PI, std::f64::consts::PI, -42.0];
+        let vals = vec![
+            1.0,
+            1.0,
+            2.5,
+            2.5,
+            std::f64::consts::PI,
+            std::f64::consts::PI,
+            -42.0,
+        ];
         let enc = encode_series(&vals);
         let dec = decode_series(&enc).expect("decode");
         assert_eq!(vals.len(), dec.len());
-        for (a,b) in vals.iter().zip(dec.iter()) { assert!((a-b).abs() < 1e-12); }
+        for (a, b) in vals.iter().zip(dec.iter()) {
+            assert!((a - b).abs() < 1e-12);
+        }
     }
 }

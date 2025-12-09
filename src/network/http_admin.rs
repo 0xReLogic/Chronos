@@ -6,8 +6,8 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server};
 use tokio::sync::Mutex;
 
-use crate::raft::{NodeRole, RaftNode};
 use crate::network::metrics;
+use crate::raft::{NodeRole, RaftNode};
 
 pub async fn run_http_admin(
     addr: SocketAddr,
@@ -53,10 +53,7 @@ async fn handle(
                 .body(Body::from(body))
                 .unwrap()
         }
-        _ => Response::builder()
-            .status(404)
-            .body(Body::empty())
-            .unwrap(),
+        _ => Response::builder().status(404).body(Body::empty()).unwrap(),
     };
 
     Ok(response)
@@ -91,11 +88,7 @@ async fn build_metrics(node: Arc<Mutex<RaftNode>>, data_dir: String) -> String {
             "# TYPE chronos_storage_size_bytes gauge\n",
             "chronos_storage_size_bytes {}\n",
         ),
-        reads,
-        writes,
-        term,
-        role_value,
-        storage_size,
+        reads, writes, term, role_value, storage_size,
     )
 }
 

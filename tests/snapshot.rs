@@ -1,6 +1,6 @@
-use chronos::storage::{SledEngine, StorageEngine, TableSchema, Column, DataType, Row};
 use chronos::parser::Value;
 use chronos::storage::snapshot::{create_snapshot, restore_snapshot};
+use chronos::storage::{Column, DataType, Row, SledEngine, StorageEngine, TableSchema};
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -16,13 +16,22 @@ async fn snapshot_backup_restore_basic() {
     let schema = TableSchema {
         name: "sensors".to_string(),
         columns: vec![
-            Column { name: "device_id".to_string(), data_type: DataType::Int },
-            Column { name: "temp".to_string(), data_type: DataType::Float },
+            Column {
+                name: "device_id".to_string(),
+                data_type: DataType::Int,
+            },
+            Column {
+                name: "temp".to_string(),
+                data_type: DataType::Float,
+            },
         ],
         ttl_seconds: None,
     };
 
-    engine.create_table("sensors", schema).await.expect("create table");
+    engine
+        .create_table("sensors", schema)
+        .await
+        .expect("create table");
 
     let mut row = Row::new();
     row.insert("device_id".to_string(), Value::Integer(42));
@@ -51,5 +60,8 @@ async fn snapshot_backup_restore_basic() {
     assert_eq!(rows.len(), 1);
     let r = &rows[0];
     assert_eq!(r.get("device_id"), Some(&Value::Integer(42)));
-    match r.get("temp") { Some(Value::Float(v)) => assert!((*v - 21.5).abs() < 1e-9), _ => panic!("bad temp"), }
+    match r.get("temp") {
+        Some(Value::Float(v)) => assert!((*v - 21.5).abs() < 1e-9),
+        _ => panic!("bad temp"),
+    }
 }

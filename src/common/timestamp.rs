@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use uhlc::{HLC, Timestamp as HlcTimestamp};
+use uhlc::{Timestamp as HlcTimestamp, HLC};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HybridTimestamp {

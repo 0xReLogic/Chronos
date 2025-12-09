@@ -21,7 +21,7 @@ impl RaftConfig {
             heartbeat_interval: 50,
         }
     }
-    
+
     pub fn add_peer(&mut self, peer_id: &str, address: &str) {
         self.peers.insert(peer_id.to_string(), address.to_string());
     }

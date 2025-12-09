@@ -15,25 +15,21 @@ async fn ttl_basic_expiry_removes_rows() {
     let mut executor = Executor::new(data_dir_str).await;
 
     // Create a table with a short TTL
-    let ast = Parser::parse(
-        "CREATE TABLE sensors (sensor_id INT, temperature FLOAT) WITH TTL = 5s;",
-    )
-    .expect("parse create table with TTL");
+    let ast =
+        Parser::parse("CREATE TABLE sensors (sensor_id INT, temperature FLOAT) WITH TTL = 5s;")
+            .expect("parse create table with TTL");
     let _ = executor
         .execute(ast)
         .await
         .expect("execute create table with TTL");
 
     // Insert a single row
-    let ast = Parser::parse(
-        "INSERT INTO sensors (sensor_id, temperature) VALUES (1, 10.0);",
-    )
-    .expect("parse insert");
+    let ast = Parser::parse("INSERT INTO sensors (sensor_id, temperature) VALUES (1, 10.0);")
+        .expect("parse insert");
     let _ = executor.execute(ast).await.expect("execute insert");
 
     // Verify row is present before TTL cleanup
-    let ast = Parser::parse("SELECT sensor_id, temperature FROM sensors;")
-        .expect("parse select");
+    let ast = Parser::parse("SELECT sensor_id, temperature FROM sensors;").expect("parse select");
     let res = executor.execute(ast).await.expect("execute select");
     assert_eq!(res.rows.len(), 1, "row should exist before TTL cleanup");
 
@@ -70,43 +66,31 @@ async fn ttl_does_not_affect_tables_without_ttl() {
     let mut executor = Executor::new(data_dir_str).await;
 
     // Table with TTL
-    let ast = Parser::parse(
-        "CREATE TABLE sensors_ttl (sensor_id INT, temperature FLOAT) WITH TTL = 5s;",
-    )
-    .expect("parse create table with TTL");
+    let ast =
+        Parser::parse("CREATE TABLE sensors_ttl (sensor_id INT, temperature FLOAT) WITH TTL = 5s;")
+            .expect("parse create table with TTL");
     let _ = executor
         .execute(ast)
         .await
         .expect("execute create table with TTL");
 
     // Table without TTL
-    let ast = Parser::parse(
-        "CREATE TABLE sensors_no_ttl (sensor_id INT, temperature FLOAT);",
-    )
-    .expect("parse create table without TTL");
+    let ast = Parser::parse("CREATE TABLE sensors_no_ttl (sensor_id INT, temperature FLOAT);")
+        .expect("parse create table without TTL");
     let _ = executor
         .execute(ast)
         .await
         .expect("execute create table without TTL");
 
     // Insert one row into each table
-    let ast = Parser::parse(
-        "INSERT INTO sensors_ttl (sensor_id, temperature) VALUES (1, 10.0);",
-    )
-    .expect("parse insert ttl");
-    let _ = executor
-        .execute(ast)
-        .await
-        .expect("execute insert ttl");
+    let ast = Parser::parse("INSERT INTO sensors_ttl (sensor_id, temperature) VALUES (1, 10.0);")
+        .expect("parse insert ttl");
+    let _ = executor.execute(ast).await.expect("execute insert ttl");
 
-    let ast = Parser::parse(
-        "INSERT INTO sensors_no_ttl (sensor_id, temperature) VALUES (1, 10.0);",
-    )
-    .expect("parse insert no ttl");
-    let _ = executor
-        .execute(ast)
-        .await
-        .expect("execute insert no ttl");
+    let ast =
+        Parser::parse("INSERT INTO sensors_no_ttl (sensor_id, temperature) VALUES (1, 10.0);")
+            .expect("parse insert no ttl");
+    let _ = executor.execute(ast).await.expect("execute insert no ttl");
 
     // Sanity check before cleanup
     let ast = Parser::parse("SELECT sensor_id, temperature FROM sensors_ttl;")

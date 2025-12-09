@@ -1,21 +1,21 @@
-mod error;
-mod node;
-mod log;
-mod state;
 mod config;
+mod error;
+mod log;
+mod node;
+mod state;
 
-pub use self::error::RaftError;
-pub use self::node::RaftNode;
-pub use self::log::{LogEntry, Log};
-pub use self::state::{NodeState, NodeRole};
 pub use self::config::RaftConfig;
+pub use self::error::RaftError;
+pub use self::log::{Log, LogEntry};
+pub use self::node::RaftNode;
+pub use self::state::{NodeRole, NodeState};
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::sleep;
 // Use external log crate, not our own log module
-use ::log::{info, error, debug};
+use ::log::{debug, error, info};
 
 // Message types for Raft communication
 #[derive(Debug, Clone)]
@@ -51,7 +51,7 @@ pub enum RaftMessage {
         term: u64,
         vote_granted: bool,
     },
-    
+
     // Log replication messages
     AppendEntries {
         term: u64,
@@ -86,31 +86,31 @@ impl Raft {
             node: Arc::new(Mutex::new(node)),
         }
     }
-    
+
     pub async fn start(&self) -> Result<(), RaftError> {
         let node = Arc::clone(&self.node);
-        
+
         // Create channels for message passing
         let (tx, mut rx) = mpsc::channel(100);
-        
+
         // Store the sender in the node
         {
             let mut node_lock = node.lock().await;
             node_lock.set_message_sender(tx.clone());
         }
-        
+
         // Spawn a task to handle incoming messages
         let node_clone = Arc::clone(&node);
         tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
                 let mut node = node_clone.lock().await;
                 match node.handle_message(message) {
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(e) => error!("Error handling message: {e}"),
                 }
             }
         });
-        
+
         // Spawn a task for election timeout
         let node_clone = Arc::clone(&node);
         tokio::spawn(async move {
@@ -125,9 +125,9 @@ impl Raft {
                         node.get_election_timeout()
                     }
                 };
-                
+
                 sleep(timeout).await;
-                
+
                 let mut node = node_clone.lock().await;
                 if node.is_leader() {
                     // Send heartbeats
@@ -147,10 +147,10 @@ impl Raft {
                 }
             }
         });
-        
+
         Ok(())
     }
-    
+
     pub fn submit_command(&self, _command: Vec<u8>) -> Result<(), RaftError> {
         // This is a sync wrapper - actual submission happens through async lock in caller
         // Caller should lock the node and call RaftNode::submit_command directly

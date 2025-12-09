@@ -1,7 +1,9 @@
-use pest::iterators::Pairs;
 use super::{ParserError, Rule};
+use pest::iterators::Pairs;
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub enum DataType {
     Int,
     Text,
@@ -10,14 +12,18 @@ pub enum DataType {
     String,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub struct ColumnDefinition {
     pub name: String,
     pub data_type: DataType,
     pub primary_key: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub struct TtlSpec {
     pub seconds: u64,
 }
@@ -27,11 +33,16 @@ fn parse_ttl_value(raw: &str) -> Result<TtlSpec, ParserError> {
     if raw.is_empty() {
         return Err(ParserError::InvalidSyntax("TTL value missing".to_string()));
     }
-    let (num_part, unit_part) = raw.split_at(raw.chars().take_while(|c| c.is_ascii_digit()).count());
+    let (num_part, unit_part) =
+        raw.split_at(raw.chars().take_while(|c| c.is_ascii_digit()).count());
     if num_part.is_empty() {
-        return Err(ParserError::InvalidSyntax("TTL numeric part missing".to_string()));
+        return Err(ParserError::InvalidSyntax(
+            "TTL numeric part missing".to_string(),
+        ));
     }
-    let n: u64 = num_part.parse().map_err(|_| ParserError::InvalidSyntax("TTL parse error".to_string()))?;
+    let n: u64 = num_part
+        .parse()
+        .map_err(|_| ParserError::InvalidSyntax("TTL parse error".to_string()))?;
     let seconds = match unit_part {
         "s" | "" => n,
         "m" => n * 60,
@@ -42,7 +53,9 @@ fn parse_ttl_value(raw: &str) -> Result<TtlSpec, ParserError> {
     Ok(TtlSpec { seconds })
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub enum Value {
     String(String),
     Integer(i64),
@@ -76,7 +89,9 @@ impl PartialOrd for Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub enum Operator {
     Equals,
     NotEquals,
@@ -86,20 +101,26 @@ pub enum Operator {
     GreaterThanOrEqual,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub struct Condition {
     pub column_name: String,
     pub operator: Operator,
     pub value: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub struct Assignment {
     pub column_name: String,
     pub value: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub enum Statement {
     CreateTable {
         table_name: String,
@@ -147,7 +168,9 @@ pub enum Statement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(
+    Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
+)]
 pub enum Ast {
     Statement(Statement),
 }
@@ -166,7 +189,7 @@ pub fn parse_ast(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             _ => {}
         }
     }
-    
+
     Err(ParserError::InvalidSyntax("Invalid SQL syntax".to_string()))
 }
 
@@ -212,7 +235,7 @@ fn parse_statement(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             _ => {}
         }
     }
-    
+
     Err(ParserError::InvalidSyntax("Invalid statement".to_string()))
 }
 
@@ -220,7 +243,7 @@ fn parse_create_table(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
     let mut table_name = String::new();
     let mut columns = Vec::new();
     let mut ttl: Option<TtlSpec> = None;
-    
+
     for pair in pairs {
         match pair.as_rule() {
             Rule::table_name => {
@@ -244,15 +267,19 @@ fn parse_create_table(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             _ => {}
         }
     }
-    
-    Ok(Ast::Statement(Statement::CreateTable { table_name, columns, ttl }))
+
+    Ok(Ast::Statement(Statement::CreateTable {
+        table_name,
+        columns,
+        ttl,
+    }))
 }
 
 fn parse_column_definition(pairs: Pairs<Rule>) -> Result<ColumnDefinition, ParserError> {
     let mut name = String::new();
     let mut data_type = DataType::Text; // Default
     let mut primary_key = false;
-    
+
     for pair in pairs {
         match pair.as_rule() {
             Rule::column_name => {
@@ -275,7 +302,7 @@ fn parse_column_definition(pairs: Pairs<Rule>) -> Result<ColumnDefinition, Parse
             _ => {}
         }
     }
-    
+
     Ok(ColumnDefinition {
         name,
         data_type,
@@ -287,7 +314,7 @@ fn parse_insert(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
     let mut table_name = String::new();
     let mut columns: Option<Vec<String>> = None;
     let mut values = Vec::new();
-    
+
     for pair in pairs {
         match pair.as_rule() {
             Rule::table_name => {
@@ -312,8 +339,12 @@ fn parse_insert(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             _ => {}
         }
     }
-    
-    Ok(Ast::Statement(Statement::Insert { table_name, columns, values }))
+
+    Ok(Ast::Statement(Statement::Insert {
+        table_name,
+        columns,
+        values,
+    }))
 }
 
 fn parse_value(pairs: Pairs<Rule>) -> Result<Value, ParserError> {
@@ -322,7 +353,7 @@ fn parse_value(pairs: Pairs<Rule>) -> Result<Value, ParserError> {
             return parse_literal(pair.into_inner());
         }
     }
-    
+
     Err(ParserError::InvalidValue("Invalid value".to_string()))
 }
 
@@ -336,13 +367,15 @@ fn parse_literal(pairs: Pairs<Rule>) -> Result<Value, ParserError> {
                 return Ok(Value::String(s.to_string()));
             }
             Rule::integer_literal => {
-                let i = pair.as_str().parse::<i64>()
-                    .map_err(|_| ParserError::InvalidValue(format!("Invalid integer: {}", pair.as_str())))?;
+                let i = pair.as_str().parse::<i64>().map_err(|_| {
+                    ParserError::InvalidValue(format!("Invalid integer: {}", pair.as_str()))
+                })?;
                 return Ok(Value::Integer(i));
             }
             Rule::float_literal => {
-                let f = pair.as_str().parse::<f64>()
-                    .map_err(|_| ParserError::InvalidValue(format!("Invalid float: {}", pair.as_str())))?;
+                let f = pair.as_str().parse::<f64>().map_err(|_| {
+                    ParserError::InvalidValue(format!("Invalid float: {}", pair.as_str()))
+                })?;
                 return Ok(Value::Float(f));
             }
             Rule::boolean_literal => {
@@ -355,7 +388,7 @@ fn parse_literal(pairs: Pairs<Rule>) -> Result<Value, ParserError> {
             _ => {}
         }
     }
-    
+
     Err(ParserError::InvalidValue("Invalid literal".to_string()))
 }
 
@@ -363,7 +396,7 @@ fn parse_select(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
     let mut table_name = String::new();
     let mut columns = Vec::new();
     let mut conditions = None;
-    
+
     for pair in pairs {
         match pair.as_rule() {
             Rule::column_selector => {
@@ -386,8 +419,12 @@ fn parse_select(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             _ => {}
         }
     }
-    
-    Ok(Ast::Statement(Statement::Select { table_name, columns, conditions }))
+
+    Ok(Ast::Statement(Statement::Select {
+        table_name,
+        columns,
+        conditions,
+    }))
 }
 
 fn parse_select_agg_1h(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
@@ -406,7 +443,10 @@ fn parse_select_agg_1h(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
         }
     }
 
-    Ok(Ast::Statement(Statement::SelectAgg1h { table_name, column_name }))
+    Ok(Ast::Statement(Statement::SelectAgg1h {
+        table_name,
+        column_name,
+    }))
 }
 
 fn parse_select_agg_24h(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
@@ -425,7 +465,10 @@ fn parse_select_agg_24h(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
         }
     }
 
-    Ok(Ast::Statement(Statement::SelectAgg24h { table_name, column_name }))
+    Ok(Ast::Statement(Statement::SelectAgg24h {
+        table_name,
+        column_name,
+    }))
 }
 
 fn parse_select_agg_7d(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
@@ -444,7 +487,10 @@ fn parse_select_agg_7d(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
         }
     }
 
-    Ok(Ast::Statement(Statement::SelectAgg7d { table_name, column_name }))
+    Ok(Ast::Statement(Statement::SelectAgg7d {
+        table_name,
+        column_name,
+    }))
 }
 
 fn parse_create_index(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
@@ -476,14 +522,14 @@ fn parse_create_index(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
 
 fn parse_where_clause(pairs: Pairs<Rule>) -> Result<Vec<Condition>, ParserError> {
     let mut conditions = Vec::new();
-    
+
     for pair in pairs {
         if pair.as_rule() == Rule::condition {
             let condition = parse_condition(pair.into_inner())?;
             conditions.push(condition);
         }
     }
-    
+
     Ok(conditions)
 }
 
@@ -517,7 +563,11 @@ fn parse_condition(pairs: Pairs<Rule>) -> Result<Condition, ParserError> {
         _ => return Err(ParserError::InvalidOperator(operator_str)),
     };
 
-    Ok(Condition { column_name, operator, value })
+    Ok(Condition {
+        column_name,
+        operator,
+        value,
+    })
 }
 
 fn parse_update(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
@@ -540,7 +590,11 @@ fn parse_update(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
         }
     }
 
-    Ok(Ast::Statement(Statement::Update { table_name, assignments, conditions }))
+    Ok(Ast::Statement(Statement::Update {
+        table_name,
+        assignments,
+        conditions,
+    }))
 }
 
 fn parse_delete(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
@@ -559,7 +613,10 @@ fn parse_delete(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
         }
     }
 
-    Ok(Ast::Statement(Statement::Delete { table_name, conditions }))
+    Ok(Ast::Statement(Statement::Delete {
+        table_name,
+        conditions,
+    }))
 }
 
 fn parse_assignment_list(pairs: Pairs<Rule>) -> Result<Vec<Assignment>, ParserError> {

@@ -1,8 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use chronos::parser::Value;
 use chronos::storage::{
     create_storage_engine, Column, DataType, Row, StorageConfig, StorageEngine, TableSchema,
 };
-use chronos::parser::Value;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use tempfile::TempDir;
 
 async fn setup_storage(config: StorageConfig) -> (Box<dyn StorageEngine>, TempDir) {
@@ -12,10 +12,10 @@ async fn setup_storage(config: StorageConfig) -> (Box<dyn StorageEngine>, TempDi
             data_dir: temp_dir.path().to_str().unwrap().to_string(),
         },
     };
-    
+
     let mut engine = create_storage_engine(config).unwrap();
     engine.init().await.unwrap();
-    
+
     (engine, temp_dir)
 }
 
@@ -42,7 +42,7 @@ async fn create_sensor_table(engine: &mut Box<dyn StorageEngine>) {
         ],
         ttl_seconds: None,
     };
-    
+
     engine.create_table("sensors", schema).await.unwrap();
 }
 
@@ -78,8 +78,14 @@ fn generate_sensor_rows(count: usize) -> Vec<Row> {
         .map(|i| {
             let mut row = Row::new();
             row.insert("sensor_id".to_string(), Value::Integer(i as i64));
-            row.insert("timestamp".to_string(), Value::Integer(1700000000 + i as i64));
-            row.insert("temperature".to_string(), Value::Float(20.0 + (i % 30) as f64));
+            row.insert(
+                "timestamp".to_string(),
+                Value::Integer(1700000000 + i as i64),
+            );
+            row.insert(
+                "temperature".to_string(),
+                Value::Float(20.0 + (i % 30) as f64),
+            );
             row.insert("humidity".to_string(), Value::Float(40.0 + (i % 40) as f64));
             row
         })
@@ -96,17 +102,17 @@ fn benchmark_insert(c: &mut Criterion) {
                     data_dir: "./bench_data".to_string(),
                 })
                 .await;
-                
+
                 create_sensor_table(&mut engine).await;
-                
+
                 let rows = generate_sensor_rows(size);
                 engine.insert("sensors", rows).await.unwrap();
-                
+
                 black_box(engine);
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -162,10 +168,7 @@ fn benchmark_insert_small_batches_ttl(c: &mut Criterion) {
 
                     let rows = generate_sensor_rows(total_rows);
                     for chunk in rows.chunks(batch_size) {
-                        engine
-                            .insert("sensors_ttl", chunk.to_vec())
-                            .await
-                            .unwrap();
+                        engine.insert("sensors_ttl", chunk.to_vec()).await.unwrap();
                     }
 
                     black_box(engine);
@@ -207,27 +210,31 @@ fn benchmark_insert_ttl(c: &mut Criterion) {
 fn benchmark_query(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("query");
-    
+
     for size in [100, 1000] {
-        group.bench_with_input(BenchmarkId::new("sled_full_scan", size), &size, |b, &size| {
-            b.to_async(&runtime).iter(|| async {
-                let (mut engine, _temp) = setup_storage(StorageConfig::Sled {
-                    data_dir: "./bench_data".to_string(),
-                })
-                .await;
-                
-                create_sensor_table(&mut engine).await;
-                
-                let rows = generate_sensor_rows(size);
-                engine.insert("sensors", rows).await.unwrap();
-                
-                let results = engine.query("sensors", None).await.unwrap();
-                
-                black_box(results);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("sled_full_scan", size),
+            &size,
+            |b, &size| {
+                b.to_async(&runtime).iter(|| async {
+                    let (mut engine, _temp) = setup_storage(StorageConfig::Sled {
+                        data_dir: "./bench_data".to_string(),
+                    })
+                    .await;
+
+                    create_sensor_table(&mut engine).await;
+
+                    let rows = generate_sensor_rows(size);
+                    engine.insert("sensors", rows).await.unwrap();
+
+                    let results = engine.query("sensors", None).await.unwrap();
+
+                    black_box(results);
+                });
+            },
+        );
     }
-    
+
     group.finish();
 }
 

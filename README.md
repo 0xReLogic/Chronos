@@ -122,6 +122,64 @@ This allows you to keep production nodes quiet while still enabling structured, 
 
 ---
 
+## Operations Runbook (Quick Ops)
+
+Short, task-oriented commands for operating Chronos.
+
+### Start / Stop / Restart
+
+- **Single-node local:**
+
+```bash
+cargo run --release -- single-node --data-dir data
+```
+
+- **3-node cluster (example):** see section *3.2 3-node Raft cluster (consensus demo)* above.
+
+To restart a node in the cluster: stop the process (Ctrl+C or kill), then re-run the same `node --id ... --data-dir ... --address ... --peers ...` command.
+
+### Replace a Node in a Cluster (same ID)
+
+1. Stop the old node process (e.g., `node2`).
+2. Optionally back up its data dir:
+
+   ```bash
+   chronos snapshot create --data-dir ./data/cluster --output ./snap-node2.snap
+   ```
+
+3. Start a fresh node with the same `--id` and `--data-dir` layout as other nodes in the cluster.
+4. Verify with:
+
+   ```bash
+   chronos admin status --http 127.0.0.1:9001
+   ```
+
+### Backup & Restore
+
+See *Backup & Restore (Snapshots)* section for full details. Quick reference:
+
+```bash
+# Create snapshot
+chronos snapshot create --data-dir ./data/node-1 --output ./backup.snap
+
+# Restore
+chronos snapshot restore --data-dir ./data/node-1 --input ./backup.snap --force
+```
+
+### Health & Metrics
+
+```bash
+# Health JSON: {status, role, term}
+chronos admin status --http 127.0.0.1:9000
+
+# Prometheus metrics
+chronos admin metrics --http 127.0.0.1:9000
+```
+
+Use these to plug Chronos into your monitoring/alerting system.
+
+---
+
 ## Monitoring & Health
 
 Each node exposes a small HTTP admin endpoint on `gRPC_port + 1000`.
@@ -525,10 +583,22 @@ cargo run --release -- client --leader 127.0.0.1:8000 --data-dir data
   cargo test --test raft_cluster
   ```
 
+- Measure MTTR for single-node failure in a 3-node cluster:
+
+  ```bash
+  cargo test --test raft_cluster three_node_cluster_failover_mttr_under_60s
+  ```
+
 - Run the Raft log property-based tests:
 
   ```bash
   cargo test --test raft_log_proptest
+  ```
+
+- Check code coverage (requires [`cargo-tarpaulin`](https://github.com/xd009642/tarpaulin) or a similar coverage tool installed):
+
+  ```bash
+  cargo tarpaulin --workspace --tests
   ```
 
 The test suite includes multi-node Raft cluster scenarios (leader failover, follower restart, isolated minority node rejecting writes) and property-based checks for Raft log append/truncate invariants.

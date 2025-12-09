@@ -28,7 +28,12 @@ pub struct WalEntry {
 }
 
 impl WalEntry {
-    pub fn new(sequence: u64, timestamp: HybridTimestamp, operation: Operation, checksum: u32) -> Self {
+    pub fn new(
+        sequence: u64,
+        timestamp: HybridTimestamp,
+        operation: Operation,
+        checksum: u32,
+    ) -> Self {
         Self {
             sequence,
             timestamp,

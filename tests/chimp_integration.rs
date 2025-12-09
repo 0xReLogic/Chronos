@@ -1,5 +1,5 @@
-use chronos::storage::{SledEngine, StorageEngine, TableSchema, Column, DataType, Row};
 use chronos::parser::Value;
+use chronos::storage::{Column, DataType, Row, SledEngine, StorageEngine, TableSchema};
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -16,12 +16,21 @@ async fn chimp_shadow_series_written_and_decodes() {
     let schema = TableSchema {
         name: "sensors".into(),
         columns: vec![
-            Column { name: "device_id".into(), data_type: DataType::Int },
-            Column { name: "temp".into(), data_type: DataType::Float },
+            Column {
+                name: "device_id".into(),
+                data_type: DataType::Int,
+            },
+            Column {
+                name: "temp".into(),
+                data_type: DataType::Float,
+            },
         ],
         ttl_seconds: None,
     };
-    engine.create_table("sensors", schema).await.expect("create");
+    engine
+        .create_table("sensors", schema)
+        .await
+        .expect("create");
 
     // Insert a few rows
     for (id, t) in [(1, 10.0_f64), (2, 10.0_f64), (3, 11.5_f64)] {
@@ -42,9 +51,15 @@ async fn chimp_shadow_series_written_and_decodes() {
     let series = db.open_tree("series:chimp:sensors:temp").unwrap();
 
     let next_key = b"series:chimp:sensors:temp:next";
-    let next_id = meta.get(next_key).unwrap().map(|b| {
-        let mut arr = [0u8;8]; arr.copy_from_slice(&b); u64::from_be_bytes(arr)
-    }).unwrap_or(0);
+    let next_id = meta
+        .get(next_key)
+        .unwrap()
+        .map(|b| {
+            let mut arr = [0u8; 8];
+            arr.copy_from_slice(&b);
+            u64::from_be_bytes(arr)
+        })
+        .unwrap_or(0);
 
     assert!(next_id >= 1, "series next_id should be >= 1");
 

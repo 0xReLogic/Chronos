@@ -1,26 +1,26 @@
-use std::sync::Arc;
+use log::{debug, error, info};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
-use log::{info, error, debug};
 
-use crate::raft::{RaftNode, RaftMessage};
+use crate::common::timestamp::HybridTimestamp;
 use crate::executor::Executor;
-use crate::parser::Parser;
+use crate::network::proto::health_service_server::HealthService;
 use crate::network::proto::raft_service_server::RaftService;
 use crate::network::proto::sql_service_server::SqlService;
-use crate::network::proto::health_service_server::HealthService;
 use crate::network::proto::sync_service_server::SyncService;
 use crate::network::proto::sync_status_service_server::SyncStatusService;
-use crate::common::timestamp::HybridTimestamp;
+use crate::parser::Parser;
+use crate::raft::{RaftMessage, RaftNode};
 use crate::storage::wal::Operation as WalOperation;
-use crate::storage::StorageError as StorageError;
+use crate::storage::StorageError;
 use uhlc::HLC;
 
 use super::proto::*;
-use crate::network::ConnectivityState;
 use crate::network::metrics;
 use crate::network::sync_status::SharedSyncStatus;
+use crate::network::ConnectivityState;
 
 type LwwStateMap = HashMap<(String, Vec<u8>), HybridTimestamp>;
 
@@ -118,7 +118,6 @@ struct SyncStats {
     total_skipped_lww: u64,
 }
 
-
 pub struct RaftServer {
     node: Arc<Mutex<RaftNode>>,
 }
@@ -163,9 +162,9 @@ impl RaftService for RaftServer {
     ) -> Result<Response<RequestVoteResponse>, Status> {
         let req = request.into_inner();
         debug!("Received RequestVote: {:?}", req);
-        
+
         let mut node = self.node.lock().await;
-        
+
         // Convert to internal message format
         let message = RaftMessage::RequestVote {
             term: req.term,
@@ -173,26 +172,26 @@ impl RaftService for RaftServer {
             last_log_index: req.last_log_index,
             last_log_term: req.last_log_term,
         };
-        
+
         // Process the message
         let mut response = RequestVoteResponse {
             term: node.state().current_term,
             vote_granted: false,
         };
-        
+
         match node.handle_message(message) {
             Ok(reply) => {
                 if let Some(RaftMessage::RequestVoteResponse { term, vote_granted }) = reply {
                     response.term = term;
                     response.vote_granted = vote_granted;
                 }
-            },
+            }
             Err(e) => {
                 error!("Error handling RequestVote: {e}");
                 return Err(Status::internal(format!("Internal error: {e}")));
             }
         }
-        
+
         Ok(Response::new(response))
     }
 
@@ -225,7 +224,7 @@ impl RaftService for RaftServer {
                     response.term = term;
                     response.vote_granted = vote_granted;
                 }
-            },
+            }
             Err(e) => {
                 error!("Error handling PreVote: {e}");
                 return Err(Status::internal(format!("Internal error: {e}")));
@@ -234,25 +233,31 @@ impl RaftService for RaftServer {
 
         Ok(Response::new(response))
     }
-    
+
     async fn append_entries(
         &self,
         request: Request<AppendEntriesRequest>,
     ) -> Result<Response<AppendEntriesResponse>, Status> {
         let req = request.into_inner();
-        debug!("Received AppendEntries: term={}, leader={}, entries={}", 
-               req.term, req.leader_id, req.entries.len());
-        
+        debug!(
+            "Received AppendEntries: term={}, leader={}, entries={}",
+            req.term,
+            req.leader_id,
+            req.entries.len()
+        );
+
         let mut node = self.node.lock().await;
-        
+
         // Convert entries to internal format
-        let entries = req.entries.into_iter()
+        let entries = req
+            .entries
+            .into_iter()
             .map(|e| crate::raft::LogEntry {
                 term: e.term,
                 command: e.command,
             })
             .collect();
-        
+
         // Convert to internal message format
         let message = RaftMessage::AppendEntries {
             term: req.term,
@@ -262,28 +267,33 @@ impl RaftService for RaftServer {
             entries,
             leader_commit: req.leader_commit,
         };
-        
+
         // Process the message
         let mut response = AppendEntriesResponse {
             term: node.state().current_term,
             success: false,
             match_index: 0,
         };
-        
+
         match node.handle_message(message) {
             Ok(reply) => {
-                if let Some(RaftMessage::AppendEntriesResponse { term, success, match_index }) = reply {
+                if let Some(RaftMessage::AppendEntriesResponse {
+                    term,
+                    success,
+                    match_index,
+                }) = reply
+                {
                     response.term = term;
                     response.success = success;
                     response.match_index = match_index;
                 }
-            },
+            }
             Err(e) => {
                 error!("Error handling AppendEntries: {e}");
                 return Err(Status::internal(format!("Internal error: {e}")));
             }
         }
-        
+
         Ok(Response::new(response))
     }
 }
@@ -310,7 +320,9 @@ impl HealthService for HealthServer {
             ConnectivityState::Disconnected => "Disconnected",
             ConnectivityState::Reconnecting => "Reconnecting",
         };
-        Ok(Response::new(HealthResponse { state: state_str.to_string() }))
+        Ok(Response::new(HealthResponse {
+            state: state_str.to_string(),
+        }))
     }
 }
 
@@ -372,10 +384,7 @@ impl SyncServer {
 
 #[tonic::async_trait]
 impl SyncService for SyncServer {
-    async fn sync(
-        &self,
-        request: Request<SyncRequest>,
-    ) -> Result<Response<SyncResponse>, Status> {
+    async fn sync(&self, request: Request<SyncRequest>) -> Result<Response<SyncResponse>, Status> {
         let req = request.into_inner();
         let mut applied: u64 = 0;
         let mut skipped_lww: u64 = 0;
@@ -431,10 +440,7 @@ impl SyncService for SyncServer {
 
                     let prev_ts = match lww.get(&map_key) {
                         Some(prev) => Some(*prev),
-                        None => match executor
-                            .get_lww_timestamp(&table, &key_bytes)
-                            .await
-                        {
+                        None => match executor.get_lww_timestamp(&table, &key_bytes).await {
                             Ok(opt_ts) => {
                                 if let Some(persisted) = opt_ts {
                                     lww.insert(map_key.clone(), persisted);
@@ -446,9 +452,7 @@ impl SyncService for SyncServer {
                             Err(e) => {
                                 error!(
                                     "LWW get_lww_timestamp error for table={} id={}: {}",
-                                    table,
-                                    entry.id,
-                                    e
+                                    table, entry.id, e
                                 );
                                 None
                             }
@@ -484,15 +488,10 @@ impl SyncService for SyncServer {
                     // Best-effort persist of the new LWW timestamp; if it
                     // fails we still keep the in-memory view and applied
                     // data, and will recompute on next sync.
-                    if let Err(e) = executor
-                        .set_lww_timestamp(&table, &key_bytes, ts)
-                        .await
-                    {
+                    if let Err(e) = executor.set_lww_timestamp(&table, &key_bytes, ts).await {
                         error!(
                             "Failed to persist LWW timestamp for table={} id={}: {}",
-                            table,
-                            entry.id,
-                            e
+                            table, entry.id, e
                         );
                     }
                     applied += 1;
@@ -524,9 +523,7 @@ impl SyncService for SyncServer {
             {
                 error!(
                     "Failed to persist last_applied_id for edge {} to {}: {}",
-                    edge_id,
-                    max_seen_id,
-                    e
+                    edge_id, max_seen_id, e
                 );
             }
         }
@@ -556,10 +553,7 @@ impl SqlService for SqlServer {
 
         let sql = request.get_ref().sql.clone();
         info!("SqlServer::execute_sql: Received SQL: {}", sql);
-        let is_read_query = sql
-            .trim_start()
-            .to_uppercase()
-            .starts_with("SELECT");
+        let is_read_query = sql.trim_start().to_uppercase().starts_with("SELECT");
 
         let auth = authenticate_request(request.metadata(), is_read_query)?;
         let role_label = match auth.role {
@@ -569,11 +563,9 @@ impl SqlService for SqlServer {
         };
         info!(
             "audit_sql user={} role={} sql={}",
-            auth.user,
-            role_label,
-            sql
+            auth.user, role_label, sql
         );
-        
+
         // Parse the SQL
         let ast = match Parser::parse(&sql) {
             Ok(ast) => {
@@ -590,7 +582,7 @@ impl SqlService for SqlServer {
                 }));
             }
         };
-        
+
         // Check if this node is the leader
         let is_leader = {
             let node = self.node.lock().await;
@@ -598,7 +590,7 @@ impl SqlService for SqlServer {
             debug!("SqlServer::execute_sql: is_leader={}", is_leader);
             is_leader
         };
-        
+
         if !is_leader {
             info!("SqlServer::execute_sql: Not the leader, returning error");
             return Ok(Response::new(SqlResponse {
@@ -608,17 +600,16 @@ impl SqlService for SqlServer {
                 rows: vec![],
             }));
         }
-        
+
         // Use tokio Mutex for async-safe locking
         let mut executor = self.executor.lock().await;
         info!("SqlServer::execute_sql: calling Executor::execute");
-        let result = executor.execute(ast).await
-            .map_err(|e| {
-                error!("SqlServer::execute_sql: Executor::execute error: {e}");
-                Status::internal(format!("Execution error: {e}"))
-            })?;
+        let result = executor.execute(ast).await.map_err(|e| {
+            error!("SqlServer::execute_sql: Executor::execute error: {e}");
+            Status::internal(format!("Execution error: {e}"))
+        })?;
         info!("SqlServer::execute_sql: Executor::execute done");
-        
+
         // Convert the result to the response format
         let mut response = SqlResponse {
             success: true,
@@ -626,11 +617,11 @@ impl SqlService for SqlServer {
             columns: result.columns,
             rows: vec![],
         };
-        
+
         // Convert rows
         for row in result.rows {
             let mut proto_row = Row { values: vec![] };
-            
+
             for value in row {
                 let proto_value = match value {
                     crate::parser::Value::String(s) => Value {
@@ -649,17 +640,20 @@ impl SqlService for SqlServer {
                         value: Some(super::proto::value::Value::NullValue(true)),
                     },
                 };
-                
+
                 proto_row.values.push(proto_value);
             }
-            
+
             response.rows.push(proto_row);
         }
-        
+
         if response.success {
             metrics::record_sql(is_read_query);
         }
-        info!("SqlServer::execute_sql: returning SqlResponse (success={})", response.success);
+        info!(
+            "SqlServer::execute_sql: returning SqlResponse (success={})",
+            response.success
+        );
         Ok(Response::new(response))
     }
 }

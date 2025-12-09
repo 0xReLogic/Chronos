@@ -5,16 +5,16 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::sleep;
-use tonic::transport::{ServerTlsConfig, Identity as TlsIdentity, Certificate as TlsCertificate};
+use tonic::transport::{Certificate as TlsCertificate, Identity as TlsIdentity, ServerTlsConfig};
 
-use chronos::Executor;
+use chronos::network::{SharedSyncStatus, SyncStatusServer, SyncStatusState, SyncWorker};
 use chronos::storage::snapshot::{create_snapshot, restore_snapshot};
-use chronos::network::{SyncWorker, SyncStatusState, SharedSyncStatus, SyncStatusServer};
-use log::{info, error};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use chronos::Executor;
+use log::{error, info};
 use tracing_log::LogTracer;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use chronos::repl::Repl;
 
@@ -70,13 +70,16 @@ fn init_logging() {
         .or_else(|_| EnvFilter::try_new("info"))
         .unwrap();
 
-    let fmt_layer = fmt::layer().with_target(true).with_timer(fmt::time::UtcTime::rfc_3339());
+    let fmt_layer = fmt::layer()
+        .with_target(true)
+        .with_timer(fmt::time::UtcTime::rfc_3339());
 
     if std::env::var("CHRONOS_LOG_FILE").is_ok() {
         // When CHRONOS_LOG_FILE is set, we keep using env_logger + RotatingFile
         // to write plain logs to disk, while tracing collects structured logs
         // to stderr by default.
-        let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+        let mut builder =
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
 
         if let Ok(path) = std::env::var("CHRONOS_LOG_FILE") {
             let max_size_mb = std::env::var("CHRONOS_LOG_MAX_SIZE_MB")
@@ -104,10 +107,7 @@ fn init_logging() {
 
 impl RotatingFile {
     fn new(path: String, max_size: u64, max_files: u32) -> io::Result<Self> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(Self {
             path,
@@ -170,21 +170,21 @@ enum Command {
         #[arg(short, long, default_value = "data")]
         data_dir: String,
     },
-    
+
     /// Start a node in a distributed cluster
     Node {
         /// Unique ID for this node
         #[arg(short, long)]
         id: String,
-        
+
         /// Directory to store data
         #[arg(short, long, default_value = "data")]
         data_dir: String,
-        
+
         /// Address to listen on
         #[arg(short, long, default_value = "127.0.0.1:8000")]
         address: String,
-        
+
         /// Comma-separated list of peer addresses (id=address)
         #[arg(short, long)]
         peers: Option<String>,
@@ -209,7 +209,7 @@ enum Command {
         #[arg(long, default_value_t = 3600)]
         ttl_cleanup_interval_secs: u64,
     },
-    
+
     /// Start the Chronos client REPL
     Client {
         /// Address of the leader node for distributed mode. If not provided, runs in local mode.
@@ -285,24 +285,24 @@ fn load_server_tls_from_env() -> Result<Option<ServerTlsConfig>, Box<dyn std::er
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
-    
+
     // Parse command line arguments
     let cli = Cli::parse();
-    
+
     match cli.command {
         Command::SingleNode { data_dir } => {
             info!("Starting Chronos in single-node mode");
-            
+
             // Create data directory if it doesn't exist
             let data_path = Path::new(&data_dir);
             if !data_path.exists() {
                 std::fs::create_dir_all(data_path)?;
             }
-            
+
             // Start REPL
             let mut repl = Repl::new(&data_dir).await;
             repl.run().await;
-        },
+        }
         Command::Client { leader, data_dir } => {
             match leader {
                 Some(leader_address) => {
@@ -323,46 +323,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     repl.run().await;
                 }
             }
-        },
-        Command::Snapshot { cmd } => {
-            match cmd {
-                SnapshotCmd::Create { data_dir, output } => {
-                    info!("Creating snapshot from '{data_dir}' to '{output}'...");
-                    create_snapshot(&data_dir, &output)?;
-                    info!("Snapshot created: {output}");
-                }
-                SnapshotCmd::Restore { data_dir, input, force } => {
-                    info!("Restoring snapshot '{input}' into '{data_dir}' (force={force})...");
-                    restore_snapshot(&data_dir, &input, force)?;
-                    info!("Snapshot restored into {data_dir}");
-                }
-            }
-        },
-        Command::Admin { cmd } => {
-            match cmd {
-                AdminCmd::Status { http } => {
-                    let body = http_get(&http, "/health")?;
-                    println!("{}", body);
-                }
-                AdminCmd::Metrics { http } => {
-                    let body = http_get(&http, "/metrics")?;
-                    println!("{}", body);
-                }
-            }
         }
-        Command::Node { id, data_dir, address, peers, clean, sync_target, sync_interval_secs, sync_batch_size, ttl_cleanup_interval_secs } => {
+        Command::Snapshot { cmd } => match cmd {
+            SnapshotCmd::Create { data_dir, output } => {
+                info!("Creating snapshot from '{data_dir}' to '{output}'...");
+                create_snapshot(&data_dir, &output)?;
+                info!("Snapshot created: {output}");
+            }
+            SnapshotCmd::Restore {
+                data_dir,
+                input,
+                force,
+            } => {
+                info!("Restoring snapshot '{input}' into '{data_dir}' (force={force})...");
+                restore_snapshot(&data_dir, &input, force)?;
+                info!("Snapshot restored into {data_dir}");
+            }
+        },
+        Command::Admin { cmd } => match cmd {
+            AdminCmd::Status { http } => {
+                let body = http_get(&http, "/health")?;
+                println!("{}", body);
+            }
+            AdminCmd::Metrics { http } => {
+                let body = http_get(&http, "/metrics")?;
+                println!("{}", body);
+            }
+        },
+        Command::Node {
+            id,
+            data_dir,
+            address,
+            peers,
+            clean,
+            sync_target,
+            sync_interval_secs,
+            sync_batch_size,
+            ttl_cleanup_interval_secs,
+        } => {
             info!("Starting Chronos node {id} at {address}");
 
             let node_data_dir = format!("{data_dir}/{id}");
 
             if clean {
-                info!("--clean flag detected, removing data directory: {}", &node_data_dir);
+                info!(
+                    "--clean flag detected, removing data directory: {}",
+                    &node_data_dir
+                );
                 let node_data_path = Path::new(&node_data_dir);
                 if node_data_path.exists() {
                     std::fs::remove_dir_all(node_data_path)?;
                 }
             }
-            
+
             // Create cluster data directory if it doesn't exist
             let data_path = Path::new(&data_dir);
             if !data_path.exists() {
@@ -371,10 +384,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Create data directory for this node
             std::fs::create_dir_all(&node_data_dir)?;
-            
+
             // Configure Raft for this node (including peers)
             let mut config = RaftConfig::new(&id, &node_data_dir);
-            
+
             // Add peers
             if let Some(peers_str) = peers {
                 for peer in peers_str.split(',') {
@@ -382,7 +395,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if parts.len() == 2 {
                         let peer_id = parts[0];
                         let peer_addr = parts[1];
-                        
+
                         if peer_id != id {
                             config.add_peer(peer_id, peer_addr);
                             info!("Added peer: {peer_id} at {peer_addr}");
@@ -390,13 +403,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            
+
             // Create executor
             let executor = Arc::new(Mutex::new(Executor::new(&node_data_dir).await));
-            
+
             // Shared sync status (used by SyncWorker and gRPC)
             let sync_status: SharedSyncStatus = Arc::new(Mutex::new(SyncStatusState::default()));
-            
+
             // Start Raft with the configured peers and per-node data dir
             let raft = Raft::new(config);
 
@@ -425,17 +438,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let _node = Arc::clone(&raft.node);
             raft.start().await?;
-            
+
             // Connectivity monitor for this node's SQL endpoint
-            let monitor = chronos::network::ConnectivityMonitor::new(&address, std::time::Duration::from_secs(3));
+            let monitor = chronos::network::ConnectivityMonitor::new(
+                &address,
+                std::time::Duration::from_secs(3),
+            );
             let connectivity_state = monitor.state();
             tokio::spawn(monitor.run());
 
             // Start gRPC server
             let addr = address.parse()?;
             let raft_server = chronos::network::RaftServer::new(Arc::clone(&raft.node));
-            let sql_server = chronos::network::SqlServer::new(Arc::clone(&raft.node), Arc::clone(&executor));
-            let health_server = chronos::network::HealthServer::new(Arc::clone(&connectivity_state));
+            let sql_server =
+                chronos::network::SqlServer::new(Arc::clone(&raft.node), Arc::clone(&executor));
+            let health_server =
+                chronos::network::HealthServer::new(Arc::clone(&connectivity_state));
             let sync_server = chronos::network::SyncServer::new(Arc::clone(&executor));
             let sync_status_server = SyncStatusServer::new(Arc::clone(&sync_status));
 
@@ -507,7 +525,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let http_node = Arc::clone(&raft.node);
                 let http_data_dir = node_data_dir.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = chronos::network::http_admin::run_http_admin(http_addr, http_node, http_data_dir).await {
+                    if let Err(e) = chronos::network::http_admin::run_http_admin(
+                        http_addr,
+                        http_node,
+                        http_data_dir,
+                    )
+                    .await
+                    {
                         eprintln!("HTTP admin server error: {}", e);
                     }
                 });
@@ -528,8 +552,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .add_service(chronos::network::proto::sync_status_service_server::SyncStatusServiceServer::new(sync_status_server))
                 .serve(addr)
                 .await?;
-        },
+        }
     }
-    
+
     Ok(())
 }

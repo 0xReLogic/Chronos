@@ -30,8 +30,8 @@ impl ChronosEmbedded {
     /// This parses the SQL string into an AST and then forwards it to the
     /// underlying Executor. Parser errors are mapped into `ExecutorError`.
     pub async fn execute(&self, sql: &str) -> Result<QueryResult, ExecutorError> {
-        let ast: Ast = Parser::parse(sql)
-            .map_err(|e| ExecutorError::ExecutionError(e.to_string()))?;
+        let ast: Ast =
+            Parser::parse(sql).map_err(|e| ExecutorError::ExecutionError(e.to_string()))?;
 
         let mut exec = self.executor.lock().await;
         exec.execute(ast).await
