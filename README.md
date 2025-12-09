@@ -9,6 +9,83 @@
 
 **Production-grade distributed SQL database engineered from the ground up in Rust. Purpose-built for edge computing, IoT gateways, and resource-constrained environments with intermittent connectivity.**
 
+## Architecture
+
+```mermaid
+graph TB
+    subgraph "Farm Site A"
+        subgraph "Sensors (ESP32)"
+            S1[Temperature<br/>25.5°C]
+            S2[Humidity<br/>65%]
+            S3[Ammonia<br/>15 ppm]
+            S4[CO2<br/>800 ppm]
+        end
+        
+        subgraph "Edge Gateway"
+            E1[ChronosDB Node 1<br/>Raspberry Pi 4<br/>Offline Queue: 0 ops]
+        end
+        
+        S1 -->|MQTT| E1
+        S2 -->|MQTT| E1
+        S3 -->|MQTT| E1
+        S4 -->|MQTT| E1
+    end
+    
+    subgraph "Farm Site B"
+        subgraph "Sensors (ESP32)"
+            S5[Temperature<br/>26.0°C]
+            S6[Humidity<br/>70%]
+            S7[Soil Moisture<br/>45%]
+            S8[Light<br/>850 lux]
+        end
+        
+        subgraph "Edge Gateway"
+            E2[ChronosDB Node 2<br/>Orange Pi Zero<br/>Offline Queue: 0 ops]
+        end
+        
+        S5 -->|MQTT| E2
+        S6 -->|MQTT| E2
+        S7 -->|MQTT| E2
+        S8 -->|MQTT| E2
+    end
+    
+    subgraph "Cloud (AWS/Azure)"
+        C1[ChronosDB Cloud<br/>3-Node Raft Cluster<br/>Leader + 2 Followers]
+        DB[(Aggregated Data<br/>7-day retention)]
+    end
+    
+    E1 -.->|Sync every 5s<br/>LWW conflict resolution<br/>HybridTimestamp| C1
+    E2 -.->|Sync every 5s<br/>LWW conflict resolution<br/>HybridTimestamp| C1
+    C1 --> DB
+    
+    subgraph "Analytics"
+        G[Grafana Dashboard]
+        P[Prometheus]
+    end
+    
+    C1 -->|/metrics| P
+    C1 -->|SQL Query| G
+    
+    style E1 fill:#e1f5ff,stroke:#0066cc,stroke-width:2px
+    style E2 fill:#e1f5ff,stroke:#0066cc,stroke-width:2px
+    style C1 fill:#fff4e1,stroke:#ff9800,stroke-width:3px
+    style DB fill:#f0f0f0,stroke:#666,stroke-width:2px
+    style S1 fill:#ffebee,stroke:#c62828
+    style S2 fill:#e3f2fd,stroke:#1565c0
+    style S3 fill:#fff3e0,stroke:#e65100
+    style S4 fill:#e8f5e9,stroke:#2e7d32
+    style S5 fill:#ffebee,stroke:#c62828
+    style S6 fill:#e3f2fd,stroke:#1565c0
+    style S7 fill:#f3e5f5,stroke:#6a1b9a
+    style S8 fill:#fff9c4,stroke:#f57f17
+```
+
+**Key Capabilities:**
+- **Edge Autonomy:** Each gateway operates independently with local SQL storage
+- **Offline Resilience:** Persistent queue buffers operations during network outages
+- **Conflict-Free Sync:** HybridTimestamp-based LWW ensures deterministic conflict resolution
+- **Real-Time Analytics:** 1h/24h/7d aggregations computed at edge, synced to cloud
+
 ## Key Features
 
 - **Custom Raft Consensus:** From-scratch implementation with pre-vote extension, lease-based reads, and log compaction for sub-5ms query latency
