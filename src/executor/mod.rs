@@ -345,11 +345,8 @@ impl Executor {
                         })?
                     };
 
-                    let commit_res = tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        rx,
-                    )
-                    .await;
+                    let commit_res =
+                        tokio::time::timeout(std::time::Duration::from_secs(10), rx).await;
 
                     match commit_res {
                         Ok(Ok(())) => {

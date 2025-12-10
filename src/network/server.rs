@@ -661,11 +661,11 @@ impl SqlService for SqlServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::SyncStatusState;
     use std::sync::Arc;
     use tokio::sync::{Mutex as TokioMutex, RwLock};
     use tonic::metadata::{AsciiMetadataValue, MetadataMap};
     use tonic::{Code, Request};
-    use crate::network::SyncStatusState;
 
     fn make_metadata(user: &str, auth_header: Option<&str>) -> MetadataMap {
         let mut meta = MetadataMap::new();

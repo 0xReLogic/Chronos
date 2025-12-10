@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use chronos::network::{ConnectivityMonitor, ConnectivityState, HealthServer};
 use chronos::network::proto::health_service_server::HealthServiceServer;
+use chronos::network::{ConnectivityMonitor, ConnectivityState, HealthServer};
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
@@ -41,5 +41,8 @@ async fn connectivity_check_once_returns_true_for_healthy_server() {
 async fn connectivity_check_once_returns_false_for_unreachable_target() {
     // Port 0 is never a valid remote port; connection should fail deterministically.
     let ok = ConnectivityMonitor::check_once("127.0.0.1:0").await;
-    assert!(!ok, "expected ConnectivityMonitor to report unreachable target as false");
+    assert!(
+        !ok,
+        "expected ConnectivityMonitor to report unreachable target as false"
+    );
 }
