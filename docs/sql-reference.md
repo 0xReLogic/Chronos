@@ -181,6 +181,44 @@ SELECT * FROM sensors WHERE temperature > 25.0;
 SELECT * FROM sensors WHERE id >= 10 AND id <= 20;
 ```
 
+#### COUNT(*), COUNT(column)
+
+```sql
+SELECT COUNT(*) FROM table_name [WHERE condition];
+SELECT COUNT(column_name) FROM table_name [WHERE condition];
+```
+
+Both return a single row with `count`; `COUNT(column)` ignores NULL values.
+
+#### GROUP BY (COUNT(*))
+
+```sql
+SELECT device, COUNT(*) FROM sensors GROUP BY device;
+SELECT device, COUNT(*) FROM sensors WHERE temperature > 25.0 GROUP BY device;
+```
+
+Groups by a single column and returns one row per distinct value with its count.
+
+#### SUM/AVG/MIN/MAX (no GROUP BY)
+
+```sql
+SELECT SUM(column_name) FROM table_name [WHERE condition];
+SELECT AVG(column_name) FROM table_name [WHERE condition];
+SELECT MIN(column_name) FROM table_name [WHERE condition];
+SELECT MAX(column_name) FROM table_name [WHERE condition];
+```
+
+Operate on numeric columns; NULLs and non-numeric values are ignored.
+
+#### INNER JOIN (USING)
+
+```sql
+SELECT * FROM sensors JOIN devices USING (device_id);
+SELECT device_id, temperature, status FROM sensors JOIN devices USING (device_id);
+```
+
+Inner join on a single column present in both tables.
+
 **Supported WHERE Operators:**
 - `=` (equals)
 - `!=`, `<>` (not equals)
@@ -190,13 +228,16 @@ SELECT * FROM sensors WHERE id >= 10 AND id <= 20;
 - `>=` (greater than or equal)
 
 **Limitations:**
-- No JOINs
+- JOIN only supported for `SELECT ... FROM left JOIN right USING (column)`; no LEFT/RIGHT/FULL OUTER or complex ON conditions
 - No subqueries
-- No GROUP BY / HAVING
+- GROUP BY only supported for `SELECT col, COUNT(*) FROM table [WHERE ...] GROUP BY col`
 - No ORDER BY
 - No LIMIT / OFFSET
 - No DISTINCT
-- No aggregate functions (SUM, COUNT, AVG) except time-window variants
+- No general aggregate functions with GROUP BY beyond:
+  - `COUNT(*)` and `COUNT(column)` without GROUP BY (both support optional WHERE)
+  - `SUM/AVG/MIN/MAX(column)` without GROUP BY (all support optional WHERE)
+  - time-window `AVG_1H`, `AVG_24H`, `AVG_7D`
 
 ---
 
@@ -506,15 +547,15 @@ SELECT AVG_1H(temperature) FROM sensors;
 ### Not Supported
 
 **Advanced SQL:**
-- JOINs (INNER, LEFT, RIGHT, FULL OUTER)
+- JOINs beyond basic `INNER JOIN ... USING (column)` (e.g., LEFT/RIGHT/FULL OUTER, arbitrary ON conditions)
 - Subqueries
 - CTEs (WITH clause)
 - Window functions (ROW_NUMBER, RANK, etc.)
 - UNION / INTERSECT / EXCEPT
 
 **Aggregations:**
-- GROUP BY / HAVING
-- General aggregate functions (SUM, COUNT, MIN, MAX, AVG)
+- GROUP BY / HAVING (only: `SELECT col, COUNT(*) FROM table [WHERE ...] GROUP BY col` is supported)
+- General aggregate functions with GROUP BY (no SUM/AVG/MIN/MAX with GROUP BY yet)
 - DISTINCT
 
 **Query Modifiers:**

@@ -149,6 +149,43 @@ pub enum Statement {
         table_name: String,
         column_name: String,
     },
+    SelectCount {
+        table_name: String,
+        column: Option<String>,
+        conditions: Option<Vec<Condition>>, // COUNT(* or column) with optional WHERE
+    },
+    SelectSum {
+        table_name: String,
+        column_name: String,
+        conditions: Option<Vec<Condition>>, // SUM(column) with optional WHERE
+    },
+    SelectAvg {
+        table_name: String,
+        column_name: String,
+        conditions: Option<Vec<Condition>>, // AVG(column) with optional WHERE
+    },
+    SelectMin {
+        table_name: String,
+        column_name: String,
+        conditions: Option<Vec<Condition>>, // MIN(column) with optional WHERE
+    },
+    SelectMax {
+        table_name: String,
+        column_name: String,
+        conditions: Option<Vec<Condition>>, // MAX(column) with optional WHERE
+    },
+    SelectJoin {
+        left_table: String,
+        right_table: String,
+        join_column: String,
+        columns: Vec<String>,
+        conditions: Option<Vec<Condition>>, // SELECT ... FROM left JOIN right USING (col) [WHERE ...]
+    },
+    SelectGroupCount {
+        table_name: String,
+        group_column: String,
+        conditions: Option<Vec<Condition>>, // SELECT col, COUNT(*) ... GROUP BY col with optional WHERE
+    },
     Begin,
     Commit,
     Rollback,
@@ -213,6 +250,27 @@ fn parse_statement(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
             }
             Rule::select_agg_7d_stmt => {
                 return parse_select_agg_7d(pair.into_inner());
+            }
+            Rule::select_count_stmt => {
+                return parse_select_count(pair.into_inner());
+            }
+            Rule::select_sum_stmt => {
+                return parse_select_sum(pair.into_inner());
+            }
+            Rule::select_avg_stmt => {
+                return parse_select_avg(pair.into_inner());
+            }
+            Rule::select_min_stmt => {
+                return parse_select_min(pair.into_inner());
+            }
+            Rule::select_max_stmt => {
+                return parse_select_max(pair.into_inner());
+            }
+            Rule::select_group_count_stmt => {
+                return parse_select_group_count(pair.into_inner());
+            }
+            Rule::select_join_stmt => {
+                return parse_select_join(pair.into_inner());
             }
             Rule::select_stmt => {
                 return parse_select(pair.into_inner());
@@ -490,6 +548,236 @@ fn parse_select_agg_7d(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
     Ok(Ast::Statement(Statement::SelectAgg7d {
         table_name,
         column_name,
+    }))
+}
+
+fn parse_select_count(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column: Option<String> = None;
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::column_name => {
+                // COUNT(column_name)
+                column = Some(pair.as_str().to_string());
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectCount {
+        table_name,
+        column,
+        conditions,
+    }))
+}
+
+fn parse_select_group_count(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut group_column = String::new();
+    let mut group_by_column: Option<String> = None;
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                if group_column.is_empty() {
+                    group_column = pair.as_str().to_string();
+                }
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            Rule::group_by_clause => {
+                for inner in pair.into_inner() {
+                    if inner.as_rule() == Rule::column_name {
+                        group_by_column = Some(inner.as_str().to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(gb_col) = group_by_column {
+        if gb_col != group_column {
+            return Err(ParserError::InvalidSyntax(
+                "GROUP BY column must match selected group column".to_string(),
+            ));
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectGroupCount {
+        table_name,
+        group_column,
+        conditions,
+    }))
+}
+
+fn parse_select_sum(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectSum {
+        table_name,
+        column_name,
+        conditions,
+    }))
+}
+
+fn parse_select_avg(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectAvg {
+        table_name,
+        column_name,
+        conditions,
+    }))
+}
+
+fn parse_select_min(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectMin {
+        table_name,
+        column_name,
+        conditions,
+    }))
+}
+
+fn parse_select_max(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut table_name = String::new();
+    let mut column_name = String::new();
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_name => {
+                column_name = pair.as_str().to_string();
+            }
+            Rule::table_name => {
+                table_name = pair.as_str().to_string();
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectMax {
+        table_name,
+        column_name,
+        conditions,
+    }))
+}
+
+fn parse_select_join(pairs: Pairs<Rule>) -> Result<Ast, ParserError> {
+    let mut left_table = String::new();
+    let mut right_table = String::new();
+    let mut join_column = String::new();
+    let mut columns = Vec::new();
+    let mut conditions = None;
+
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::column_selector => {
+                if pair.as_str() == "*" {
+                    columns.push("*".to_string());
+                } else {
+                    for column_pair in pair.into_inner() {
+                        if column_pair.as_rule() == Rule::column_name {
+                            columns.push(column_pair.as_str().to_string());
+                        }
+                    }
+                }
+            }
+            Rule::table_name => {
+                if left_table.is_empty() {
+                    left_table = pair.as_str().to_string();
+                } else {
+                    right_table = pair.as_str().to_string();
+                }
+            }
+            Rule::column_name => {
+                // JOIN ... USING(column_name)
+                if join_column.is_empty() {
+                    join_column = pair.as_str().to_string();
+                }
+            }
+            Rule::where_clause => {
+                conditions = Some(parse_where_clause(pair.into_inner())?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Ast::Statement(Statement::SelectJoin {
+        left_table,
+        right_table,
+        join_column,
+        columns,
+        conditions,
     }))
 }
 

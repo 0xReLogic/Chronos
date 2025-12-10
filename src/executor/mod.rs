@@ -292,6 +292,13 @@ impl Executor {
                     | Statement::SelectAgg1h { .. }
                     | Statement::SelectAgg24h { .. }
                     | Statement::SelectAgg7d { .. }
+                    | Statement::SelectCount { .. }
+                    | Statement::SelectSum { .. }
+                    | Statement::SelectAvg { .. }
+                    | Statement::SelectMin { .. }
+                    | Statement::SelectMax { .. }
+                    | Statement::SelectJoin { .. }
+                    | Statement::SelectGroupCount { .. }
             )
         );
 
@@ -539,6 +546,53 @@ impl Executor {
 
                 self.convert_rows_to_query_result(&columns, rows)
             }
+            Statement::SelectJoin {
+                left_table,
+                right_table,
+                join_column,
+                columns,
+                conditions,
+            } => {
+                let left_filter = self.convert_to_filter(conditions.as_ref());
+
+                let left_rows = self
+                    .storage
+                    .query(&left_table, left_filter)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let right_rows = self
+                    .storage
+                    .query(&right_table, None)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let mut joined: Vec<Row> = Vec::new();
+
+                for l in &left_rows {
+                    let lk = match l.get(&join_column) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+
+                    for r in &right_rows {
+                        let rk = match r.get(&join_column) {
+                            Some(v) => v,
+                            None => continue,
+                        };
+
+                        if lk == rk {
+                            let mut merged = l.clone();
+                            for (k, v) in &r.values {
+                                merged.values.insert(k.clone(), v.clone());
+                            }
+                            joined.push(merged);
+                        }
+                    }
+                }
+
+                self.convert_rows_to_query_result(&columns, joined)
+            }
             Statement::Update {
                 table_name,
                 assignments,
@@ -632,6 +686,243 @@ impl Executor {
                 Ok(QueryResult {
                     columns: vec![col_label],
                     rows: vec![vec![value]],
+                })
+            }
+
+            Statement::SelectCount {
+                table_name,
+                column,
+                conditions,
+            } => {
+                let filter = self.convert_to_filter(conditions.as_ref());
+
+                let rows = self
+                    .storage
+                    .query(&table_name, filter)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let count = if let Some(col) = column {
+                    rows.iter()
+                        .filter_map(|row| row.get(&col))
+                        .filter(|v| !matches!(v, Value::Null))
+                        .count() as i64
+                } else {
+                    rows.len() as i64
+                };
+
+                Ok(QueryResult {
+                    columns: vec!["count".to_string()],
+                    rows: vec![vec![Value::Integer(count)]],
+                })
+            }
+
+            Statement::SelectSum {
+                table_name,
+                column_name,
+                conditions,
+            } => {
+                let filter = self.convert_to_filter(conditions.as_ref());
+
+                let rows = self
+                    .storage
+                    .query(&table_name, filter)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let mut sum = 0.0f64;
+                let mut count = 0u64;
+
+                for row in &rows {
+                    if let Some(v) = row.get(&column_name) {
+                        match v {
+                            Value::Integer(i) => {
+                                sum += *i as f64;
+                                count += 1;
+                            }
+                            Value::Float(f) => {
+                                sum += *f;
+                                count += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                let label = format!("sum({})", column_name);
+                let value = if count == 0 {
+                    Value::Null
+                } else {
+                    Value::Float(sum)
+                };
+
+                Ok(QueryResult {
+                    columns: vec![label],
+                    rows: vec![vec![value]],
+                })
+            }
+
+            Statement::SelectAvg {
+                table_name,
+                column_name,
+                conditions,
+            } => {
+                let filter = self.convert_to_filter(conditions.as_ref());
+
+                let rows = self
+                    .storage
+                    .query(&table_name, filter)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let mut sum = 0.0f64;
+                let mut count = 0u64;
+
+                for row in &rows {
+                    if let Some(v) = row.get(&column_name) {
+                        match v {
+                            Value::Integer(i) => {
+                                sum += *i as f64;
+                                count += 1;
+                            }
+                            Value::Float(f) => {
+                                sum += *f;
+                                count += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                let label = format!("avg({})", column_name);
+                let value = if count == 0 {
+                    Value::Null
+                } else {
+                    Value::Float(sum / count as f64)
+                };
+
+                Ok(QueryResult {
+                    columns: vec![label],
+                    rows: vec![vec![value]],
+                })
+            }
+
+            Statement::SelectMin {
+                table_name,
+                column_name,
+                conditions,
+            } => {
+                let filter = self.convert_to_filter(conditions.as_ref());
+
+                let rows = self
+                    .storage
+                    .query(&table_name, filter)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let mut current: Option<Value> = None;
+
+                for row in &rows {
+                    if let Some(v) = row.get(&column_name) {
+                        match v {
+                            Value::Integer(_) | Value::Float(_) => {
+                                if let Some(ref cur) = current {
+                                    if v < cur {
+                                        current = Some(v.clone());
+                                    }
+                                } else {
+                                    current = Some(v.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                let label = format!("min({})", column_name);
+                let value = current.unwrap_or(Value::Null);
+
+                Ok(QueryResult {
+                    columns: vec![label],
+                    rows: vec![vec![value]],
+                })
+            }
+
+            Statement::SelectMax {
+                table_name,
+                column_name,
+                conditions,
+            } => {
+                let filter = self.convert_to_filter(conditions.as_ref());
+
+                let rows = self
+                    .storage
+                    .query(&table_name, filter)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let mut current: Option<Value> = None;
+
+                for row in &rows {
+                    if let Some(v) = row.get(&column_name) {
+                        match v {
+                            Value::Integer(_) | Value::Float(_) => {
+                                if let Some(ref cur) = current {
+                                    if v > cur {
+                                        current = Some(v.clone());
+                                    }
+                                } else {
+                                    current = Some(v.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                let label = format!("max({})", column_name);
+                let value = current.unwrap_or(Value::Null);
+
+                Ok(QueryResult {
+                    columns: vec![label],
+                    rows: vec![vec![value]],
+                })
+            }
+
+            Statement::SelectGroupCount {
+                table_name,
+                group_column,
+                conditions,
+            } => {
+                let filter = self.convert_to_filter(conditions.as_ref());
+
+                let rows = self
+                    .storage
+                    .query(&table_name, filter)
+                    .await
+                    .map_err(|e| ExecutorError::StorageError(e.to_string()))?;
+
+                let mut groups: Vec<(Value, i64)> = Vec::new();
+
+                for row in &rows {
+                    let key = row.get(&group_column).cloned().unwrap_or(Value::Null);
+
+                    if let Some((_, count)) = groups.iter_mut().find(|(k, _)| *k == key) {
+                        *count += 1;
+                    } else {
+                        groups.push((key, 1));
+                    }
+                }
+
+                let columns = vec![group_column.clone(), "count".to_string()];
+                let result_rows = groups
+                    .into_iter()
+                    .map(|(k, c)| vec![k, Value::Integer(c)])
+                    .collect();
+
+                Ok(QueryResult {
+                    columns,
+                    rows: result_rows,
                 })
             }
 

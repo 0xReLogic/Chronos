@@ -37,6 +37,15 @@ TTL = { ^"TTL" }
 AVG_1H = { ^"AVG_1H" }
 AVG_24H = { ^"AVG_24H" }
 AVG_7D = { ^"AVG_7D" }
+COUNT = { ^"COUNT" }
+SUM = { ^"SUM" }
+AVG = { ^"AVG" }
+MIN = { ^"MIN" }
+MAX = { ^"MAX" }
+GROUP = { ^"GROUP" }
+BY = { ^"BY" }
+JOIN = { ^"JOIN" }
+USING = { ^"USING" }
 
 // Identifiers
 identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -72,6 +81,7 @@ value_list = { "(" ~ value ~ ("," ~ value)* ~ ")" }
 column_selector = { "*" | column_name ~ ("," ~ column_name)* }
 condition = { column_name ~ comparison_operator ~ value }
 where_clause = { WHERE ~ condition ~ ((AND | OR) ~ condition)* }
+group_by_clause = { GROUP ~ BY ~ column_name }
 assignment = { column_name ~ "=" ~ value }
 assignment_list = { assignment ~ ("," ~ assignment)* }
 
@@ -82,6 +92,13 @@ insert_stmt = { INSERT ~ INTO ~ table_name ~ ("(" ~ column_name ~ ("," ~ column_
 select_agg_1h_stmt = { SELECT ~ AVG_1H ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ ";" }
 select_agg_24h_stmt = { SELECT ~ AVG_24H ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ ";" }
 select_agg_7d_stmt = { SELECT ~ AVG_7D ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ ";" }
+select_count_stmt = { SELECT ~ COUNT ~ "(" ~ ("*" | column_name) ~ ")" ~ FROM ~ table_name ~ where_clause? ~ ";" }
+select_sum_stmt = { SELECT ~ SUM ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ where_clause? ~ ";" }
+select_avg_stmt = { SELECT ~ AVG ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ where_clause? ~ ";" }
+select_min_stmt = { SELECT ~ MIN ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ where_clause? ~ ";" }
+select_max_stmt = { SELECT ~ MAX ~ "(" ~ column_name ~ ")" ~ FROM ~ table_name ~ where_clause? ~ ";" }
+select_group_count_stmt = { SELECT ~ column_name ~ "," ~ COUNT ~ "(" ~ "*" ~ ")" ~ FROM ~ table_name ~ where_clause? ~ group_by_clause ~ ";" }
+select_join_stmt = { SELECT ~ column_selector ~ FROM ~ table_name ~ JOIN ~ table_name ~ USING ~ "(" ~ column_name ~ ")" ~ where_clause? ~ ";" }
 select_stmt = { SELECT ~ column_selector ~ FROM ~ table_name ~ where_clause? ~ ";" }
 begin_stmt = { BEGIN ~ TRANSACTION? ~ ";" }
 commit_stmt = { COMMIT ~ ";" }
@@ -98,6 +115,13 @@ sql_stmt = { create_table_stmt
                  | select_agg_1h_stmt
                  | select_agg_24h_stmt
                  | select_agg_7d_stmt
+                 | select_count_stmt
+                 | select_sum_stmt
+                 | select_avg_stmt
+                 | select_min_stmt
+                 | select_max_stmt
+                 | select_group_count_stmt
+                 | select_join_stmt
                  | select_stmt
                  | begin_stmt
                  | commit_stmt
