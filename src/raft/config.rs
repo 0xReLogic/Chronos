@@ -16,9 +16,11 @@ impl RaftConfig {
             node_id: node_id.to_string(),
             data_dir: data_dir.to_string(),
             peers: HashMap::new(),
-            election_timeout_min: 150,
-            election_timeout_max: 300,
-            heartbeat_interval: 50,
+            // Defaults tuned for small edge nodes (low CPU/RAM) to reduce
+            // spurious elections under scheduler and network jitter.
+            election_timeout_min: 800,
+            election_timeout_max: 1600,
+            heartbeat_interval: 100,
         }
     }
 

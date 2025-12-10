@@ -10,7 +10,7 @@ pub use self::ast::{
 pub use self::error::ParserError;
 
 #[derive(Parser)]
-#[grammar = "parser/sql.pest"]
+#[grammar = "parser/chronos.pest"]
 struct SqlParser;
 
 pub struct Parser;
