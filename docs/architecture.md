@@ -127,6 +127,7 @@ Lightweight HTTP server on `grpc_port + 1000`:
   - `chronos_raft_term`
   - `chronos_raft_role` (0=follower, 1=candidate, 2=leader)
   - `chronos_storage_size_bytes`
+ - `/ingest`: Optional gateway ingest endpoint (when node is started with `--enable-ingest`) that accepts JSON payloads from ESP/IoT devices, enqueues them in memory, and writes into the `readings` table via the SQL executor.
 
 ---
 
@@ -141,8 +142,8 @@ ChronosDB implements Raft consensus from scratch with the following components:
 **RaftNode** (`src/raft/node.rs`)
 - State machine: Follower, Candidate, Leader
 - Term management and vote tracking
-- Election timeout with randomization (150-300ms default)
-- Heartbeat interval (50ms default)
+- Election timeout with randomization (800-1600ms default, tuned for small edge nodes)
+- Heartbeat interval (100ms default)
 - Lease-based reads (3x heartbeat interval)
 
 **RaftLog** (`src/raft/log.rs`)

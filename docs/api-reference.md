@@ -429,6 +429,47 @@ scrape_configs:
 
 ---
 
+### POST /ingest
+
+Gateway-only ingest endpoint for ESP/IoT devices. Available on the admin HTTP port (gRPC port + 1000) when the node is started with `--enable-ingest`.
+
+**Request:**
+
+```bash
+curl -X POST http://127.0.0.1:9000/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id": "esp-001",
+    "ts": 1733856000,
+    "seq": 42,
+    "metrics": { "temp": 30.5, "humidity": 40.2 }
+  }'
+```
+
+**Request Body:**
+
+```json
+{
+  "device_id": "esp-001",
+  "ts": 1733856000,
+  "seq": 42,
+  "metrics": {
+    "temp": 30.5,
+    "humidity": 40.2
+  }
+}
+```
+
+Each entry in `metrics` produces one row in the `readings` table with columns `(reading_id, device_id, ts, seq, metric, value)`. The worker retries transient errors a few times with backoff.
+
+**Responses:**
+
+- `202 Accepted` – payload queued: `{ "status": "queued" }`
+- `400 Bad Request` – invalid JSON or unreadable body
+- `503 Service Unavailable` – ingest disabled on this node
+
+---
+
 ## CLI Commands
 
 ### chronos single-node
@@ -469,6 +510,7 @@ chronos node [OPTIONS]
 - `--sync-interval-secs <SECS>`: Sync interval (default: 5)
 - `--sync-batch-size <SIZE>`: Sync batch size (default: 100)
 - `--ttl-cleanup-interval-secs <SECS>`: TTL cleanup interval (default: 3600)
+- `--enable-ingest`: Enable HTTP `/ingest` endpoint and background ingest worker (gateway mode)
 
 **Example:**
 ```bash

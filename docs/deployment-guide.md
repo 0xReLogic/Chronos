@@ -215,6 +215,39 @@ Node 3 (Follower):  10.0.0.3:8002  (admin: 9002)
               - LWW conflict resolution
 ```
 
+#### Gateway ingest mode (ESP → HTTP)
+
+Besides SQL/gRPC, the edge gateway can accept data directly from ESP/IoT devices via the HTTP admin ingest mode:
+
+- Start the edge node with an extra flag:
+
+  ```bash
+  ./chronos node \
+    --id edge1 \
+    --data-dir /var/lib/chronos/edge \
+    --address 192.168.1.100:8001 \
+    --clean \
+    --sync-target http://10.0.0.10:8000 \
+    --sync-interval-secs 5 \
+    --sync-batch-size 100 \
+    --enable-ingest
+  ```
+
+- ESP sends payloads to the admin HTTP port (`address_port + 1000`), for example:
+
+  ```bash
+  curl -X POST http://192.168.1.100:9001/ingest \
+    -H 'Content-Type: application/json' \
+    -d '{
+      "device_id": "esp-001",
+      "ts": 1733856000,
+      "seq": 42,
+      "metrics": { "temp": 30.5, "humidity": 40.2 }
+    }'
+  ```
+
+- Each metric is stored into the `readings` table as a row `(reading_id, device_id, ts, seq, metric, value)`. The gateway queues and retries in the background; ESP can send once and forget.
+
 #### Start Cloud Node
 
 ```bash

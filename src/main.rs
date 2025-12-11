@@ -208,6 +208,10 @@ enum Command {
         /// Interval in seconds between TTL cleanup passes
         #[arg(long, default_value_t = 3600)]
         ttl_cleanup_interval_secs: u64,
+
+        /// Enable HTTP ingest endpoint and background queue worker (gateway mode)
+        #[arg(long, default_value_t = false)]
+        enable_ingest: bool,
     },
 
     /// Start the Chronos client REPL
@@ -360,6 +364,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sync_interval_secs,
             sync_batch_size,
             ttl_cleanup_interval_secs,
+            enable_ingest,
         } => {
             info!("Starting Chronos node {id} at {address}");
 
@@ -508,11 +513,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-
                         sleep(Duration::from_secs(ttl_cleanup_interval_secs)).await;
                     }
                 });
             }
+
+            // Optional ingest queue + worker for gateway mode. When enabled,
+            // the HTTP admin server can accept POST /ingest requests and
+            // enqueue them for background insertion into the readings table.
+            let ingest_tx_opt = if enable_ingest {
+                let (tx, rx) = mpsc::unbounded_channel::<chronos::network::IngestRequest>();
+                let executor_for_ingest = Arc::clone(&executor);
+                tokio::spawn(async move {
+                    chronos::network::run_ingest_worker(rx, executor_for_ingest).await;
+                });
+                Some(tx)
+            } else {
+                None
+            };
 
             let http_addr = {
                 let mut s: std::net::SocketAddr = addr;
@@ -524,11 +542,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let http_node = Arc::clone(&raft.node);
                 let http_data_dir = node_data_dir.clone();
+                let ingest_tx = ingest_tx_opt.clone();
                 tokio::spawn(async move {
                     if let Err(e) = chronos::network::http_admin::run_http_admin(
                         http_addr,
                         http_node,
                         http_data_dir,
+                        ingest_tx,
                     )
                     .await
                     {

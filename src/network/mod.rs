@@ -33,6 +33,7 @@ impl std::error::Error for NetworkError {}
 pub mod client;
 pub mod connectivity;
 pub mod http_admin;
+pub mod ingest;
 pub mod metrics;
 pub mod offline_queue;
 pub mod server;
@@ -40,6 +41,7 @@ pub mod sync_status;
 pub mod sync_worker;
 
 pub use connectivity::*;
+pub use ingest::{run_ingest_worker, IngestRequest};
 pub use offline_queue::*;
 pub use server::{HealthServer, SyncServer, SyncStatusServer};
 pub use sync_status::{SharedSyncStatus, SyncStatusState};

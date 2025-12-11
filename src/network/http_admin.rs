@@ -3,41 +3,48 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Request, Response, Server};
-use tokio::sync::Mutex;
+use hyper::{body, Body, Method, Request, Response};
+use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
-use crate::network::metrics;
+use crate::network::{metrics, IngestRequest};
 use crate::raft::{NodeRole, RaftNode};
 
 pub async fn run_http_admin(
     addr: SocketAddr,
     node: Arc<Mutex<RaftNode>>,
     data_dir: String,
+    ingest_tx: Option<UnboundedSender<IngestRequest>>,
 ) -> Result<(), hyper::Error> {
     let node_arc = Arc::clone(&node);
 
     let make_svc = make_service_fn(move |_conn| {
         let node = Arc::clone(&node_arc);
         let data_dir = data_dir.clone();
+        let ingest_tx = ingest_tx.clone();
         async move {
             Ok::<_, Infallible>(service_fn(move |req| {
                 let node = Arc::clone(&node);
                 let data_dir = data_dir.clone();
-                async move { handle(req, node, data_dir).await }
+                let ingest_tx = ingest_tx.clone();
+                async move { handle(req, node, data_dir, ingest_tx).await }
             }))
         }
     });
 
-    Server::bind(&addr).serve(make_svc).await
+    hyper::Server::bind(&addr).serve(make_svc).await
 }
 
 async fn handle(
     req: Request<Body>,
     node: Arc<Mutex<RaftNode>>,
     data_dir: String,
+    ingest_tx: Option<UnboundedSender<IngestRequest>>,
 ) -> Result<Response<Body>, Infallible> {
-    let response = match (req.method(), req.uri().path()) {
-        (&Method::GET, "/metrics") => {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+
+    let response = match (method, path.as_str()) {
+        (Method::GET, "/metrics") => {
             let body = build_metrics(node, data_dir).await;
             Response::builder()
                 .status(200)
@@ -45,13 +52,60 @@ async fn handle(
                 .body(Body::from(body))
                 .unwrap()
         }
-        (&Method::GET, "/health") => {
+        (Method::GET, "/health") => {
             let body = build_health(node).await;
             Response::builder()
                 .status(200)
                 .header("Content-Type", "application/json")
                 .body(Body::from(body))
                 .unwrap()
+        }
+        (Method::POST, "/ingest") => {
+            if let Some(tx) = ingest_tx.clone() {
+                match body::to_bytes(req.into_body()).await {
+                    Ok(bytes) => match serde_json::from_slice::<IngestRequest>(&bytes) {
+                        Ok(msg) => {
+                            if let Err(e) = tx.send(msg) {
+                                let body =
+                                    format!("{{\"error\":\"ingest queue unavailable: {}\"}}", e);
+                                Response::builder()
+                                    .status(503)
+                                    .header("Content-Type", "application/json")
+                                    .body(Body::from(body))
+                                    .unwrap()
+                            } else {
+                                Response::builder()
+                                    .status(202)
+                                    .header("Content-Type", "application/json")
+                                    .body(Body::from("{\"status\":\"queued\"}"))
+                                    .unwrap()
+                            }
+                        }
+                        Err(e) => {
+                            let body = format!("{{\"error\":\"invalid JSON: {}\"}}", e);
+                            Response::builder()
+                                .status(400)
+                                .header("Content-Type", "application/json")
+                                .body(Body::from(body))
+                                .unwrap()
+                        }
+                    },
+                    Err(e) => {
+                        let body = format!("{{\"error\":\"failed to read request body: {}\"}}", e);
+                        Response::builder()
+                            .status(400)
+                            .header("Content-Type", "application/json")
+                            .body(Body::from(body))
+                            .unwrap()
+                    }
+                }
+            } else {
+                Response::builder()
+                    .status(503)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{\"error\":\"ingest disabled\"}"))
+                    .unwrap()
+            }
         }
         _ => Response::builder().status(404).body(Body::empty()).unwrap(),
     };
