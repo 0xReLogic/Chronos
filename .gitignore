@@ -37,3 +37,7 @@ Thumbs.db
 
 # Snapshots
 *.snap
+
+tarpaulin-report.html
+tarpaulin-report*.html
+/coverage/
