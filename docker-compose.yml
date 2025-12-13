@@ -9,7 +9,8 @@ services:
       "--id", "node1",
       "--data-dir", "/data",
       "--address", "0.0.0.0:8000",
-      "--peers", "node2=node2:8000,node3=node3:8000"
+      "--peers", "node2=node2:8000,node3=node3:8000",
+      "--enable-ingest"
     ]
     ports:
       - "8000:8000"   # gRPC SQL/Raft

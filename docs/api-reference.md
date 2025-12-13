@@ -98,11 +98,12 @@ grpcurl -plaintext \
 
 **Authentication:**
 
-Add `authorization` metadata header:
+Add `authorization` metadata header (optional `x-chronos-user` for audit logging):
 
 ```bash
 grpcurl -plaintext \
   -H "authorization: Bearer your-admin-token" \
+  -H "x-chronos-user: alice" \
   -import-path ./proto \
   -proto raft.proto \
   -d '{"sql": "INSERT INTO sensors VALUES (1, 25.5, \"sensor-01\")"}' \
@@ -114,13 +115,12 @@ grpcurl -plaintext \
 - Admin token: Read + write operations
 - Read-only token: SELECT only, writes rejected with `PERMISSION_DENIED`
 
-**Error Codes:**
-- `OK`: Success
-- `INVALID_ARGUMENT`: SQL syntax error
-- `NOT_FOUND`: Table not found
-- `PERMISSION_DENIED`: Insufficient permissions
-- `UNAVAILABLE`: Not the leader (distributed mode)
-- `INTERNAL`: Storage or execution error
+**Error Behavior:**
+- Auth failures return gRPC status codes (`UNAUTHENTICATED`, `PERMISSION_DENIED`).
+- Storage/execution failures return gRPC `INTERNAL`.
+- Some application-level errors are returned with gRPC `OK` but `SqlResponse.success=false`:
+  - SQL parse errors (`error` starts with `Parse error:`)
+  - Not-the-leader responses (`error` is `Not the leader`)
 
 ---
 
@@ -274,7 +274,7 @@ let request = SyncRequest {
     operations: vec![
         SyncOperation {
             id: 1,
-            data: bincode::encode_to_vec(&op, config)?,
+            data: bincode::serde::encode_to_vec(&op, bincode::config::standard())?,
         },
     ],
 };
@@ -656,7 +656,7 @@ impl ChronosEmbedded {
     pub async fn new(data_dir: &str) -> Self;
 
     /// Execute SQL statement
-    pub async fn execute(&mut self, sql: &str) -> Result<QueryResult, ExecutorError>;
+    pub async fn execute(&self, sql: &str) -> Result<QueryResult, ExecutorError>;
 }
 
 pub struct QueryResult {
@@ -784,19 +784,17 @@ let mut client = SqlServiceClient::new(channel);
 | Code | Description | Cause |
 |------|-------------|-------|
 | `OK` | Success | Operation completed successfully |
-| `INVALID_ARGUMENT` | Invalid input | SQL syntax error, invalid parameters |
-| `NOT_FOUND` | Resource not found | Table does not exist |
 | `PERMISSION_DENIED` | Insufficient permissions | Read-only token attempting write |
-| `UNAVAILABLE` | Service unavailable | Not the leader, node down |
 | `INTERNAL` | Internal error | Storage error, execution error |
 | `UNAUTHENTICATED` | Authentication failed | Invalid or missing token |
+| `UNAVAILABLE` | Service unavailable | Transport-level failure (node down / network) |
 
 ### Example Error Response
 
 ```json
 {
   "success": false,
-  "error": "Table sensors not found",
+  "error": "Not the leader",
   "columns": [],
   "rows": []
 }
@@ -806,16 +804,20 @@ let mut client = SqlServiceClient::new(channel);
 
 **Recommended retry strategy:**
 
-1. **UNAVAILABLE (not leader):**
+1. **Not leader (`SqlResponse.success=false`, `error="Not the leader"`):**
+   - Discover leader via `/health` and retry against leader
    - Retry with exponential backoff
-   - Discover new leader via health check
    - Max retries: 3
 
-2. **INTERNAL (storage error):**
+2. **UNAVAILABLE (transport):**
+   - Retry with exponential backoff
+   - Indicates node down / network failure
+
+3. **INTERNAL (execution/storage error):**
    - Retry once after 1s delay
    - If persistent, alert operator
 
-3. **INVALID_ARGUMENT:**
+4. **Parse error (`SqlResponse.success=false`, `error` starts with `Parse error:`):**
    - Do not retry (client error)
    - Fix SQL syntax
 
@@ -829,7 +831,18 @@ let max_retries = 3;
 
 loop {
     match client.execute_sql(request.clone()).await {
-        Ok(response) => break Ok(response),
+        Ok(response) => {
+            let inner = response.into_inner();
+            if inner.success {
+                break Ok(inner);
+            }
+            if inner.error == "Not the leader" && retries < max_retries {
+                retries += 1;
+                sleep(Duration::from_millis(100 * 2_u64.pow(retries))).await;
+                continue;
+            }
+            break Ok(inner);
+        }
         Err(e) if e.code() == Code::Unavailable && retries < max_retries => {
             retries += 1;
             sleep(Duration::from_millis(100 * 2_u64.pow(retries))).await;

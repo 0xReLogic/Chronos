@@ -57,8 +57,8 @@ Complete SQL syntax documentation:
 
 #### [API Reference](api-reference.md)
 Complete API documentation for:
-- gRPC services (SqlService, RaftService, SyncService, HealthService)
-- HTTP admin endpoints (/health, /metrics)
+- gRPC services (SqlService, RaftService, SyncService, SyncStatusService, HealthService)
+- HTTP admin endpoints (/health, /metrics, POST /ingest)
 - CLI commands (node, client, snapshot, admin)
 - Embedded mode (Rust library API)
 - Authentication and authorization
@@ -87,7 +87,8 @@ Complete API documentation for:
 
 - **Integration Tests:** `tests/raft_cluster.rs` - 3-node cluster scenarios
 - **Property Tests:** `tests/raft_log_proptest.rs` - Raft log invariants
-- **Sync Tests:** `tests/chimp_integration.rs` - Edge-to-cloud sync
+- **Sync Tests:** `tests/sync_lww.rs` - Edge-to-cloud sync (LWW + cursor)
+- **Chimp Tests:** `tests/chimp_integration.rs` - Chimp compression
 
 ---
 
@@ -110,7 +111,7 @@ Future documentation planned:
 All code examples are tested and runnable. Shell commands assume:
 - Working directory: repository root
 - Binary location: `./target/release/chronos` or `./chronos`
-- Rust toolchain: 1.70+
+- Rust toolchain: 1.91+
 
 ### Placeholders
 

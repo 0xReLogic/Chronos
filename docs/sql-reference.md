@@ -24,10 +24,12 @@ ChronosDB implements a subset of SQL optimized for edge/IoT workloads. The focus
 
 | Type | Description | Storage | Example |
 |------|-------------|---------|---------|
-| `INT` | 64-bit signed integer | 8 bytes | `42`, `-100` |
-| `FLOAT` | 64-bit floating point | 8 bytes | `25.5`, `-3.14` |
+| `INT` | 64-bit signed integer | 8 bytes | `42`, `100` |
+| `FLOAT` | 64-bit floating point | 8 bytes | `25.5`, `3.14` |
 | `STRING` | UTF-8 text | Variable | `'sensor-01'` |
 | `BOOLEAN` | True/false | 1 byte | `TRUE`, `FALSE` |
+
+Note: numeric literals currently do not support a leading sign (e.g. `-1`).
 
 ### Type Aliases
 
@@ -37,9 +39,11 @@ ChronosDB implements a subset of SQL optimized for edge/IoT workloads. The focus
 
 All columns support NULL by default:
 
+Note: ChronosDB currently uses `= NULL` (no `IS NULL`).
+
 ```sql
 INSERT INTO sensors (id, temp) VALUES (1, NULL);
-SELECT * FROM sensors WHERE temp IS NULL;
+SELECT * FROM sensors WHERE temp = NULL;
 ```
 
 ---
@@ -83,10 +87,10 @@ CREATE TABLE metrics (value FLOAT) WITH TTL=3600s;
 - Rows expire based on insert time
 - Background cleanup runs every `ttl_cleanup_interval_secs` (default: 3600s)
 - Expired rows deleted in batches (default: 1000 per pass)
-- TTL metadata stored in `__ttl_index__` tree
+- TTL metadata stored in `__ttl__` tree
 
 **Limitations:**
-- No PRIMARY KEY constraint
+- `PRIMARY KEY` is parsed but not enforced
 - No FOREIGN KEY constraint
 - No UNIQUE constraint
 - No DEFAULT values
@@ -142,14 +146,15 @@ INSERT INTO sensors (id, temperature, device) VALUES (1, 25.5, 'sensor-01');
 INSERT INTO sensors VALUES (2, 30.0, 'sensor-02');
 
 -- NULL values
-INSERT INTO sensors (id, device) VALUES (3, 'sensor-03');  -- temperature = NULL
+INSERT INTO sensors (id, temperature, device) VALUES (3, NULL, 'sensor-03');
 ```
 
 **Behavior:**
 - Single-row insert only (no batch INSERT)
+- You must provide a value for every column (use `NULL` explicitly)
 - Distributed mode: routed through Raft consensus
 - Triggers aggregation bucket updates (for FLOAT columns)
-- Triggers offline queue append (if sync enabled)
+- Appends to persistent offline queue (used by sync when enabled)
 
 **Limitations:**
 - No multi-row INSERT: `VALUES (...), (...)`
@@ -178,7 +183,7 @@ SELECT id, temperature FROM sensors;
 -- With filter
 SELECT * FROM sensors WHERE device = 'sensor-01';
 SELECT * FROM sensors WHERE temperature > 25.0;
-SELECT * FROM sensors WHERE id >= 10 AND id <= 20;
+SELECT * FROM sensors WHERE id >= 10;
 ```
 
 #### COUNT(*), COUNT(column)
@@ -221,7 +226,7 @@ Inner join on a single column present in both tables.
 
 **Supported WHERE Operators:**
 - `=` (equals)
-- `!=`, `<>` (not equals)
+- `!=` (not equals)
 - `<` (less than)
 - `<=` (less than or equal)
 - `>` (greater than)
@@ -231,6 +236,7 @@ Inner join on a single column present in both tables.
 - JOIN only supported for `SELECT ... FROM left JOIN right USING (column)`; no LEFT/RIGHT/FULL OUTER or complex ON conditions
 - No subqueries
 - GROUP BY only supported for `SELECT col, COUNT(*) FROM table [WHERE ...] GROUP BY col`
+- WHERE clauses with `AND`/`OR` are parsed, but only the first condition is applied during execution
 - No ORDER BY
 - No LIMIT / OFFSET
 - No DISTINCT
@@ -245,7 +251,7 @@ Inner join on a single column present in both tables.
 
 **Syntax:**
 ```sql
-UPDATE table_name SET column1 = value1, column2 = value2, ... WHERE condition;
+UPDATE table_name SET column1 = value1, column2 = value2, ... [WHERE condition];
 ```
 
 **Examples:**
@@ -258,11 +264,11 @@ UPDATE sensors SET device = 'sensor-updated' WHERE device = 'sensor-01';
 **Behavior:**
 - Fetch matching rows
 - Apply assignments
-- Delete old rows
+- Delete old rows (only when WHERE is provided)
 - Insert updated rows
 
 **Limitations:**
-- WHERE clause required (no UPDATE without filter)
+- WHERE clause is strongly recommended; UPDATE without WHERE does not delete existing rows
 - No UPDATE ... FROM
 - No computed expressions in SET clause
 
@@ -399,14 +405,15 @@ COMMIT;
 ```
 
 **Behavior:**
-- Single-node mode: Statements buffered until COMMIT
-- Distributed mode: Transactions not supported (each statement is atomic)
+- Statements buffered until COMMIT
+- Buffering is in-memory (not persisted across process restarts)
+- Distributed mode: BEGIN/COMMIT/ROLLBACK are replicated via Raft like other write statements
 
 **Limitations:**
-- No distributed transactions
+- Not durable across process restarts (buffer is in-memory)
+- COMMIT is best-effort (no rollback if a buffered statement fails)
 - No isolation levels
 - No savepoints
-- Single-row ACID only in distributed mode
 
 ---
 
@@ -570,7 +577,7 @@ SELECT AVG_1H(temperature) FROM sensors;
 - TRUNCATE TABLE
 
 **Constraints:**
-- PRIMARY KEY
+- PRIMARY KEY enforcement (keyword is parsed but not enforced)
 - FOREIGN KEY
 - UNIQUE
 - CHECK
@@ -596,22 +603,27 @@ SELECT AVG_1H(temperature) FROM sensors;
 ChronosDB uses Pest parser with the following grammar (simplified):
 
 ```pest
-statement = { create_table | insert | select | update | delete | create_index }
+sql_stmt = { create_table | create_index | insert | select | update | delete | begin | commit | rollback }
 
-create_table = { "CREATE" ~ "TABLE" ~ identifier ~ "(" ~ column_list ~ ")" ~ ttl_clause? }
-column_list = { column_def ~ ("," ~ column_def)* }
-column_def = { identifier ~ data_type }
+create_table = { "CREATE" ~ "TABLE" ~ identifier ~ "(" ~ column_def ~ ("," ~ column_def)* ~ ")" ~ ttl_clause? ~ ";" }
+column_def = { identifier ~ data_type ~ ("PRIMARY" ~ "KEY")? }
 data_type = { "INT" | "FLOAT" | "STRING" | "TEXT" | "BOOLEAN" }
-ttl_clause = { "WITH" ~ "TTL" ~ "=" ~ duration }
+ttl_clause = { "WITH" ~ "TTL" ~ "=" ~ ttl_value }
 
-insert = { "INSERT" ~ "INTO" ~ identifier ~ column_list? ~ "VALUES" ~ value_list }
-select = { "SELECT" ~ column_list ~ "FROM" ~ identifier ~ where_clause? }
-update = { "UPDATE" ~ identifier ~ "SET" ~ assignment_list ~ where_clause }
-delete = { "DELETE" ~ "FROM" ~ identifier ~ where_clause }
+create_index = { "CREATE" ~ "INDEX" ~ identifier ~ "ON" ~ identifier ~ "(" ~ identifier ~ ")" ~ ";" }
+insert = { "INSERT" ~ "INTO" ~ identifier ~ ("(" ~ identifier ~ ("," ~ identifier)* ~ ")")? ~ "VALUES" ~ value_list ~ ";" }
 
-where_clause = { "WHERE" ~ condition }
-condition = { identifier ~ operator ~ value }
-operator = { "=" | "!=" | "<>" | "<" | "<=" | ">" | ">=" }
+select = { "SELECT" ~ ("*" | identifier ~ ("," ~ identifier)*) ~ "FROM" ~ identifier ~ where_clause? ~ ";" }
+update = { "UPDATE" ~ identifier ~ "SET" ~ assignment_list ~ where_clause? ~ ";" }
+delete = { "DELETE" ~ "FROM" ~ identifier ~ where_clause? ~ ";" }
+
+begin = { "BEGIN" ~ "TRANSACTION"? ~ ";" }
+commit = { "COMMIT" ~ ";" }
+rollback = { "ROLLBACK" ~ ";" }
+
+where_clause = { "WHERE" ~ condition ~ (("AND" | "OR") ~ condition)* }
+condition = { identifier ~ operator ~ literal }
+operator = { "=" | "!=" | "<" | "<=" | ">" | ">=" }
 ```
 
 Full grammar: `src/parser/chronos.pest`

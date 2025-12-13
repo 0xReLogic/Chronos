@@ -2,7 +2,7 @@
 
 [![Rust CI](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml/badge.svg)](https://github.com/0xReLogic/chronos/actions/workflows/rust.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust Version](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
 [![Binary Size](https://img.shields.io/badge/binary-<6MB-blue.svg)](https://github.com/0xReLogic/Chronos)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20arm-lightgrey.svg)](https://github.com/0xReLogic/Chronos)
 [![Protocol](https://img.shields.io/badge/protocol-gRPC%20%7C%20HTTP-green.svg)](https://github.com/0xReLogic/Chronos)
@@ -25,10 +25,10 @@ graph TB
             E1[ChronosDB Node 1<br/>Raspberry Pi 4<br/>Offline Queue: 0 ops]
         end
         
-        S1 -->|MQTT| E1
-        S2 -->|MQTT| E1
-        S3 -->|MQTT| E1
-        S4 -->|MQTT| E1
+        S1 -->|HTTP /ingest| E1
+        S2 -->|HTTP /ingest| E1
+        S3 -->|HTTP /ingest| E1
+        S4 -->|HTTP /ingest| E1
     end
     
     subgraph "Farm Site B"
@@ -43,15 +43,15 @@ graph TB
             E2[ChronosDB Node 2<br/>Orange Pi Zero<br/>Offline Queue: 0 ops]
         end
         
-        S5 -->|MQTT| E2
-        S6 -->|MQTT| E2
-        S7 -->|MQTT| E2
-        S8 -->|MQTT| E2
+        S5 -->|HTTP /ingest| E2
+        S6 -->|HTTP /ingest| E2
+        S7 -->|HTTP /ingest| E2
+        S8 -->|HTTP /ingest| E2
     end
     
     subgraph "Cloud (AWS/Azure)"
         C1[ChronosDB Cloud<br/>3-Node Raft Cluster<br/>Leader + 2 Followers]
-        DB[(Aggregated Data<br/>7-day retention)]
+        DB[(Data<br/>TTL-configurable retention)]
     end
     
     E1 -.->|Sync every 5s<br/>LWW conflict resolution<br/>HybridTimestamp| C1
@@ -84,20 +84,20 @@ graph TB
 - **Edge Autonomy:** Each gateway operates independently with local SQL storage
 - **Offline Resilience:** Persistent queue buffers operations during network outages
 - **Conflict-Free Sync:** HybridTimestamp-based LWW ensures deterministic conflict resolution
-- **Real-Time Analytics:** 1h/24h/7d aggregations computed at edge, synced to cloud
+- **Real-Time Analytics:** `AVG_1H`/`AVG_24H`/`AVG_7D` windowed queries for FLOAT columns
 
 ## Key Features
 
-- **Custom Raft Consensus:** From-scratch implementation with pre-vote extension, lease-based reads, and log compaction for sub-5ms query latency
-- **Hybrid Logical Clocks (HLC):** UHLC-based distributed timestamp ordering with causal consistency guarantees for conflict-free edge-to-cloud replication
-- **Bit-Level Compression:** Experimental Chimp algorithm with XOR encoding and leading-zero optimization for time-series FLOAT columns (2-3x better than LZ4)
-- **Pluggable Storage Trait:** Abstract storage interface with Sled backend, transparent LZ4 row compression, secondary B-tree indexes, and adaptive LRU caching
-- **Offline-First Replication:** Persistent operation queue with HybridTimestamp metadata, automatic sync worker, LWW conflict resolution, and per-edge cursor tracking
-- **Real-Time Aggregation Engine:** Lock-free in-memory hierarchical buckets (minute/hour/day) for streaming 1h/24h/7d windowed analytics without full table scans
-- **Connectivity-Aware Sync:** Automatic network state detection (Connected/Disconnected/Reconnecting) with exponential backoff and health probe integration
-- **Zero-Copy Serialization:** Protocol Buffers + bincode with minimal allocation overhead for high-throughput edge workloads
-- **Production Observability:** Prometheus metrics export, structured tracing, rotating file logs, and gRPC health endpoints
-- **Defense-in-Depth Security:** Bearer token RBAC with role separation, mTLS certificate validation, per-operation audit logging, and TLS domain verification
+- **Custom Raft Consensus:** From-scratch implementation with pre-vote RPC and leader-only reads/writes
+- **Hybrid Logical Clocks (HLC):** UHLC timestamps used for LWW conflict resolution in edge-to-cloud sync
+- **Bit-Level Compression:** Experimental Chimp compression for FLOAT columns (opt-in via `CHRONOS_CHIMP_ENABLE`)
+- **Pluggable Storage Trait:** Sled backend with LZ4 row compression, secondary indexes, and an LRU cache
+- **Offline-First Replication:** Persistent offline queue + sync worker with LWW + per-edge cursor tracking
+- **Real-Time Aggregation Engine:** In-memory rolling buckets for `AVG_1H`/`AVG_24H`/`AVG_7D` persisted to `agg_state` on disk
+- **Health / Connectivity:** gRPC HealthService exposes `Connected/Disconnected/Reconnecting` state
+- **Efficient Serialization:** Protocol Buffers + bincode for RPC and internal encoding
+- **Production Observability:** Prometheus `/metrics`, structured tracing, and rotating file logs
+- **Optional Security:** Bearer tokens (Admin/ReadOnly) and optional TLS/mTLS
 
 ## Quick Start
 
@@ -105,15 +105,18 @@ graph TB
 
 **Download pre-built binary:**
 ```bash
-wget https://github.com/0xReLogic/Chronos/releases/latest/download/chronos-linux-x86_64
-chmod +x chronos-linux-x86_64
-sudo mv chronos-linux-x86_64 /usr/local/bin/chronos
+wget https://github.com/0xReLogic/Chronos/releases/latest/download/chronos
+chmod +x chronos
+sudo mv chronos /usr/local/bin/chronos
 ```
+
+All commands below assume `chronos` is on your `PATH`. If you're running from the repo, replace `chronos` with `./target/release/chronos` (or `./chronos` if the binary is in your current directory).
 
 **Or build from source:**
 ```bash
 cargo build --release
 # Binary: target/release/chronos (5.6MB)
+# If you didn't install it, run: ./target/release/chronos
 ```
 
 ### Single-Node Mode
@@ -126,31 +129,61 @@ chronos single-node --data-dir data
 
 ```bash
 # Terminal 1
-./chronos node --id node1 --address 127.0.0.1:8000 \
+chronos node --id node1 --address 127.0.0.1:8000 \
   --peers node2=127.0.0.1:8001,node3=127.0.0.1:8002
 
 # Terminal 2
-./chronos node --id node2 --address 127.0.0.1:8001 \
+chronos node --id node2 --address 127.0.0.1:8001 \
   --peers node1=127.0.0.1:8000,node3=127.0.0.1:8002
 
 # Terminal 3
-./chronos node --id node3 --address 127.0.0.1:8002 \
+chronos node --id node3 --address 127.0.0.1:8002 \
   --peers node1=127.0.0.1:8000,node2=127.0.0.1:8001
 
 # Client
-./chronos client --leader 127.0.0.1:8000
+chronos client --leader 127.0.0.1:8000
 ```
 
 ### Edge-to-Cloud Sync
 
 ```bash
 # Cloud node
-./chronos node --id cloud --address 10.0.0.10:8000
+chronos node --id cloud --address 10.0.0.10:8000
 
 # Edge node (syncs to cloud)
-./chronos node --id edge1 --address 192.168.1.100:8001 \
+chronos node --id edge1 --address 192.168.1.100:8001 \
   --sync-target http://10.0.0.10:8000 \
   --sync-interval-secs 5
+```
+
+### HTTP Ingest (Gateway Mode)
+
+Start a node with `--enable-ingest` to accept `POST /ingest` on the admin HTTP port (gRPC port + 1000).
+
+```bash
+chronos node --id edge1 --address 192.168.1.100:8001 \
+  --sync-target http://10.0.0.10:8000 \
+  --sync-interval-secs 5 \
+  --enable-ingest
+```
+
+Create the `readings` table once:
+
+```sql
+CREATE TABLE readings (reading_id STRING, device_id STRING, ts INT, seq INT, metric STRING, value FLOAT);
+```
+
+Send an ingest request (admin port is `8001 + 1000 = 9001`):
+
+```bash
+curl -X POST http://192.168.1.100:9001/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id": "esp-001",
+    "ts": 1733856000,
+    "seq": 42,
+    "metrics": { "temp": 30.5, "humidity": 40.2 }
+  }'
 ```
 
 ## SQL Examples
@@ -242,8 +275,8 @@ curl http://127.0.0.1:9000/metrics
 ### Backup
 
 ```bash
-./chronos snapshot create --data-dir ./data --output backup.snap
-./chronos snapshot restore --data-dir ./data --input backup.snap --force
+chronos snapshot create --data-dir ./data --output backup.snap
+chronos snapshot restore --data-dir ./data --input backup.snap --force
 ```
 
 ## Testing

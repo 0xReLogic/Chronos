@@ -148,9 +148,9 @@ ChronosDB implements Raft consensus from scratch with the following components:
 
 **RaftLog** (`src/raft/log.rs`)
 - Persistent log entries stored in `raft/log.bin`
-- Binary format: `[term: u64][command_len: u64][command: bytes]`
-- Append-only with truncation support for log compaction
-- In-memory cache for recent entries
+- Format: `bincode(Vec<LogEntry { term: u64, command: bytes }>)`
+- Implementation rewrites the log file on append/truncate (simple, not streaming append-only)
+- In-memory cache for log entries
 
 **Pre-Vote Extension**
 - Prevents disruptive elections when partitioned nodes rejoin
@@ -158,8 +158,8 @@ ChronosDB implements Raft consensus from scratch with the following components:
 - Only starts real election if majority grants pre-vote
 
 **Lease-Based Reads**
-- Leader maintains short lease (default 3x heartbeat = 150ms)
-- Read queries served locally during lease without quorum
+- Leader maintains short lease (default 3x heartbeat; with 100ms heartbeat default = 300ms)
+- Read queries served on the leader without quorum; lease tracked via `RaftNode::can_serve_read_locally()`
 - Reduces read latency from ~5ms to ~2ms
 
 #### Log Replication Flow
@@ -288,7 +288,7 @@ ChronosDB maintains in-memory hierarchical buckets for fast time-series aggregat
 data/
 ├── __schemas__          # Table metadata (TableSchema)
 ├── __indexes__          # Index metadata
-├── __ttl_index__        # TTL expiry index (timestamp -> row_key)
+├── __ttl__              # TTL expiry index (timestamp -> table -> row_key)
 ├── __lww_ts__           # Last-Write-Wins timestamps
 ├── __offline_queue__    # Persistent offline operations
 ├── __wal__              # Write-ahead log entries
@@ -300,7 +300,7 @@ data/
 #### Row Storage
 
 **Format:**
-- Key: Auto-incrementing u64 (per table)
+- Key: Row key string (`<insert_time_nanos>:<rand_hex>`) for stable uniqueness and time locality
 - Value: LZ4-compressed bincode-encoded Row
 - Compression: Transparent, ~7x reduction for typical IoT data
 
@@ -330,7 +330,7 @@ CREATE INDEX idx_device ON sensors(device_id);
 
 **Index Tree:**
 - Tree name: `index:sensors:device_id`
-- Key: `device_id_value`
+- Key: `json(value):row_key` (prefix-scan by `json(value)`)
 - Value: `row_key`
 
 **Query Optimization:**
@@ -346,7 +346,7 @@ CREATE INDEX idx_device ON sensors(device_id);
 
 **Location:** `src/storage/sled_engine.rs`
 
-- In-memory LRU cache (default: 1000 entries)
+- In-memory LRU cache (default: 10,000 entries)
 - Key: `(table_name, row_key)`
 - Value: Decompressed Row
 - Used on indexed query path
@@ -366,7 +366,7 @@ CREATE INDEX idx_device ON sensors(device_id);
 ```rust
 struct PersistentQueuedOperation {
     id: u64,                    // Monotonic sequence ID
-    ts: HybridTimestamp,        // Logical + physical timestamp
+    timestamp: HybridTimestamp, // Hybrid logical clock timestamp
     operation: Operation,       // INSERT/UPDATE/DELETE
 }
 ```
@@ -378,10 +378,10 @@ struct PersistentQueuedOperation {
 
 **Drain Flow:**
 1. SyncWorker calls `Executor::drain_offline_queue(limit)`
-2. Fetch oldest `limit` operations
-3. Send to cloud via `SyncService::Sync`
-4. On success: remove from queue
-5. On failure: requeue operations
+2. Drain removes oldest `limit` operations
+3. Compact LWW ops per `(table, key)` before sending
+4. Send to cloud via `SyncService::Sync`
+5. On failure: requeue compacted operations
 
 #### Edge-to-Cloud Sync
 
@@ -396,11 +396,12 @@ sequenceDiagram
     
     loop Every sync_interval_secs
         Edge->>Edge: Drain offline queue (batch_size)
+        Edge->>Edge: Compact LWW ops per (table, key)
         Edge->>Cloud: SyncRequest {edge_id, operations}
         Cloud->>Cloud: Apply operations (LWW conflict resolution)
         Cloud->>Cloud: Update per-edge cursor (last_applied_id)
         Cloud->>Edge: SyncResponse {applied}
-        Edge->>Edge: Remove applied ops from queue
+        Edge->>Edge: On failure: requeue operations
     end
 ```
 
@@ -422,9 +423,8 @@ sequenceDiagram
 **HybridTimestamp:**
 ```rust
 struct HybridTimestamp {
-    logical: u64,   // Lamport clock
-    physical: u64,  // Wall-clock microseconds
-    node_id: String,
+    ts: uhlc::Timestamp,
+    node_id: u64,
 }
 ```
 
@@ -444,8 +444,8 @@ CREATE TABLE sensors (id INT, temp FLOAT) WITH TTL=7d;
 ```
 
 **TTL Index:**
-- Tree: `__ttl_index__`
-- Key: `table_name:expiry_timestamp:row_key`
+- Tree: `__ttl__`
+- Key: `expiry_timestamp:table_name:row_key`
 - Value: empty
 
 **Cleanup Worker:**
@@ -581,10 +581,12 @@ COMMIT;
 ```
 
 **Limitations:**
-- No JOINs, subqueries, or window functions
-- No GROUP BY / HAVING
+- JOIN only supported for `SELECT ... FROM left JOIN right USING (column)`
+- No subqueries or window functions
+- GROUP BY only supported for `SELECT col, COUNT(*) FROM table [WHERE ...] GROUP BY col` (no HAVING)
 - Single-row ACID only (no multi-row transactions in distributed mode)
-- Aggregations limited to AVG_1H/24H/7D for FLOAT columns
+- Aggregations support COUNT/SUM/AVG/MIN/MAX (no GROUP BY except COUNT(*))
+- Time-window aggregations limited to AVG_1H/24H/7D for FLOAT columns (no WHERE)
 
 ### gRPC Protocol
 
@@ -661,7 +663,7 @@ message SyncOperation {
 ### Failure Modes
 
 **Leader Failure:**
-- Election timeout triggers new election (150-300ms)
+- Election timeout triggers new election (800-1600ms default)
 - New leader elected via majority vote
 - MTTR: <60s for single-node failure
 
@@ -671,7 +673,7 @@ message SyncOperation {
 - Partition heals: minority syncs from leader
 
 **Edge Disconnection:**
-- Writes queued locally (up to 10k ops default)
+- Writes queued locally (persistent offline queue; bounded by disk)
 - Automatic sync on reconnect
 - LWW resolves conflicts
 

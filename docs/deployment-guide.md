@@ -34,7 +34,7 @@ ChronosDB can be deployed in three primary configurations:
 
 ### Software Requirements
 
-- **Rust Toolchain:** 1.70+ (for building from source)
+- **Rust Toolchain:** 1.91+ (for building from source)
 - **protoc:** Protocol Buffers compiler (build dependency)
 - **Operating System:** Linux (Ubuntu 20.04+, Debian 11+, RHEL 8+)
 - **Optional:** Docker 20.10+ for containerized deployment
@@ -45,21 +45,15 @@ ChronosDB can be deployed in three primary configurations:
 
 ### Option 1: Download Pre-Built Binary (Recommended)
 
-Download the latest release binary for your platform:
+Download the latest release binary:
 
 ```bash
-# Linux x86_64
-wget https://github.com/0xReLogic/Chronos/releases/latest/download/chronos-linux-x86_64
-chmod +x chronos-linux-x86_64
-sudo mv chronos-linux-x86_64 /usr/local/bin/chronos
-
-# Linux ARM64
-wget https://github.com/0xReLogic/Chronos/releases/latest/download/chronos-linux-arm64
-chmod +x chronos-linux-arm64
-sudo mv chronos-linux-arm64 /usr/local/bin/chronos
+wget https://github.com/0xReLogic/Chronos/releases/latest/download/chronos
+chmod +x chronos
+sudo mv chronos /usr/local/bin/chronos
 ```
 
-**Binary Size:** ~5.6MB (optimized with LTO and strip)
+**Note:** GitHub Releases currently publish a Linux x86_64 binary named `chronos`.
 
 **Verify Installation:**
 ```bash
@@ -246,7 +240,14 @@ Besides SQL/gRPC, the edge gateway can accept data directly from ESP/IoT devices
     }'
   ```
 
-- Each metric is stored into the `readings` table as a row `(reading_id, device_id, ts, seq, metric, value)`. The gateway queues and retries in the background; ESP can send once and forget.
+- Each metric is inserted into the `readings` table as one row `(reading_id, device_id, ts, seq, metric, value)`.
+- You must create the `readings` table first:
+
+  ```sql
+  CREATE TABLE readings (reading_id STRING, device_id STRING, ts INT, seq INT, metric STRING, value FLOAT);
+  ```
+
+- Ingest is best-effort: requests are queued in-memory (HTTP `202`) and the worker retries up to 5 times per metric.
 
 #### Start Cloud Node
 
@@ -314,7 +315,8 @@ grpcurl -plaintext \
 {
   "lastSyncTsMs": "1765127479252",
   "lastSyncApplied": "2",
-  "pendingOps": "0"
+  "pendingOps": "0",
+  "lastError": ""
 }
 ```
 
@@ -352,10 +354,12 @@ export CHRONOS_AUTH_TOKEN=your-secure-admin-token
 #### Security (TLS/mTLS)
 
 ```bash
-# Enable TLS for gRPC
+# Enable TLS (server)
 export CHRONOS_TLS_CERT=/etc/chronos/tls/server.crt
 export CHRONOS_TLS_KEY=/etc/chronos/tls/server.key
 export CHRONOS_TLS_CA_CERT=/etc/chronos/tls/ca.crt
+
+# Optional (clients): TLS domain for certificate verification (default: localhost)
 export CHRONOS_TLS_DOMAIN=chronos.example.com
 ```
 
@@ -381,6 +385,7 @@ Options:
       --sync-interval-secs <SECS>         Sync interval [default: 5]
       --sync-batch-size <SIZE>            Sync batch size [default: 100]
       --ttl-cleanup-interval-secs <SECS>  TTL cleanup interval [default: 3600]
+      --enable-ingest                     Enable HTTP ingest endpoint and background worker [default: false]
 ```
 
 ---
@@ -510,7 +515,7 @@ sudo systemctl stop chronos
 **Step 3: Restore from backup** (optional)
 ```bash
 ./chronos snapshot restore \
-  --data-dir /var/lib/chronos/cluster \
+  --data-dir /var/lib/chronos/cluster/node2 \
   --input /backups/node2-latest.snap \
   --force
 ```
@@ -562,20 +567,16 @@ curl http://10.0.0.1:9000/metrics
 
 **Sample Output:**
 ```
-# HELP chronos_sql_requests_total Total SQL requests
 # TYPE chronos_sql_requests_total counter
 chronos_sql_requests_total{kind="read"} 1523
 chronos_sql_requests_total{kind="write"} 847
 
-# HELP chronos_raft_term Current Raft term
 # TYPE chronos_raft_term gauge
 chronos_raft_term 5
 
-# HELP chronos_raft_role Current Raft role (0=follower, 1=candidate, 2=leader)
 # TYPE chronos_raft_role gauge
 chronos_raft_role 2
 
-# HELP chronos_storage_size_bytes Storage size in bytes
 # TYPE chronos_storage_size_bytes gauge
 chronos_storage_size_bytes 104857600
 ```
@@ -646,7 +647,7 @@ grpcurl -plaintext \
 **Causes:**
 1. Network unreachable
 2. Cloud node down
-3. Authentication failure
+3. TLS mismatch (if TLS is enabled)
 
 **Resolution:**
 ```bash
@@ -656,8 +657,7 @@ curl http://10.0.0.10:9000/health
 # Check edge logs
 journalctl -u chronos -f | grep sync
 
-# Verify auth token
-echo $CHRONOS_AUTH_TOKEN
+# If TLS is enabled, verify CHRONOS_TLS_* env vars are set consistently on both sides
 ```
 
 #### High Disk Usage
@@ -677,10 +677,11 @@ du -sh /var/lib/chronos/*
 CREATE TABLE sensors (...) WITH TTL=7d;
 
 # Manual cleanup (if TTL not set)
-DELETE FROM sensors WHERE timestamp < NOW() - INTERVAL '7 days';
+# Chronos SQL has no NOW()/INTERVAL helpers; compute the cutoff timestamp in your app.
+DELETE FROM sensors WHERE timestamp < 1733856000;
 
 # Increase TTL cleanup frequency
---ttl-cleanup-interval-secs 1800  # 30 minutes
+chronos node ... --ttl-cleanup-interval-secs 1800  # 30 minutes
 ```
 
 ---
@@ -709,45 +710,74 @@ docker run -d \
 
 `docker-compose.yml`:
 ```yaml
-version: '3.8'
+version: "3.9"
 
 services:
   node1:
-    image: chronos:latest
+    build: .
     container_name: chronos-node1
+    command: [
+      "node",
+      "--id", "node1",
+      "--data-dir", "/data",
+      "--address", "0.0.0.0:8000",
+      "--peers", "node2=node2:8000,node3=node3:8000",
+      "--enable-ingest"
+    ]
     ports:
-      - "8000:8000"
-      - "9000:9000"
+      - "8000:8000"   # gRPC SQL/Raft
+      - "9000:9000"   # HTTP admin (gRPC port + 1000)
+    environment:
+      CHRONOS_AUTH_TOKEN_ADMIN: "admin-secret"
+      CHRONOS_AUTH_TOKEN_READONLY: "readonly-secret"
     volumes:
-      - ./data/node1:/data
-    command: >
-      node --id node1 --data-dir /data --address 0.0.0.0:8000
-      --peers node2=node2:8001,node3=node3:8002
+      - node1-data:/data
 
   node2:
-    image: chronos:latest
+    build: .
     container_name: chronos-node2
+    command: [
+      "node",
+      "--id", "node2",
+      "--data-dir", "/data",
+      "--address", "0.0.0.0:8000",
+      "--peers", "node1=node1:8000,node3=node3:8000"
+    ]
     ports:
-      - "8001:8001"
-      - "9001:9001"
+      - "8001:8000"
+      - "9001:9000"
+    environment:
+      CHRONOS_AUTH_TOKEN_ADMIN: "admin-secret"
+      CHRONOS_AUTH_TOKEN_READONLY: "readonly-secret"
     volumes:
-      - ./data/node2:/data
-    command: >
-      node --id node2 --data-dir /data --address 0.0.0.0:8001
-      --peers node1=node1:8000,node3=node3:8002
+      - node2-data:/data
 
   node3:
-    image: chronos:latest
+    build: .
     container_name: chronos-node3
+    command: [
+      "node",
+      "--id", "node3",
+      "--data-dir", "/data",
+      "--address", "0.0.0.0:8000",
+      "--peers", "node1=node1:8000,node2=node2:8000"
+    ]
     ports:
-      - "8002:8002"
-      - "9002:9002"
+      - "8002:8000"
+      - "9002:9000"
+    environment:
+      CHRONOS_AUTH_TOKEN_ADMIN: "admin-secret"
+      CHRONOS_AUTH_TOKEN_READONLY: "readonly-secret"
     volumes:
-      - ./data/node3:/data
-    command: >
-      node --id node3 --data-dir /data --address 0.0.0.0:8002
-      --peers node1=node1:8000,node2=node2:8001
+      - node3-data:/data
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
 ```
+
+Ingest: `node1` exposes `POST /ingest` at `http://localhost:9000/ingest` (unauthenticated).
 
 **Start Cluster:**
 ```bash
@@ -825,13 +855,9 @@ docker-compose down
 ### Storage Optimization
 
 ```bash
-# Increase cache size (default: 1000 entries)
-# Modify src/storage/sled_engine.rs:
-const CACHE_CAPACITY: usize = 5000;
-
-# Adjust Sled cache size
-# Set environment variable:
-export SLED_CACHE_SIZE_MB=256
+# Increase cache size (default: 10_000 entries)
+# Modify src/storage/sled_engine.rs (cache_capacity):
+# let cache_capacity = NonZeroUsize::new(20_000).expect("non-zero cache size");
 ```
 
 ### Raft Tuning
@@ -839,11 +865,11 @@ export SLED_CACHE_SIZE_MB=256
 ```bash
 # Reduce election timeout for faster failover
 # Modify src/raft/config.rs:
-election_timeout_min: 100,  // default: 150
-election_timeout_max: 200,  // default: 300
+election_timeout_min: 100,  // default: 800
+election_timeout_max: 200,  // default: 1600
 
 # Increase heartbeat frequency
-heartbeat_interval: 30,  // default: 50
+heartbeat_interval: 30,  // default: 100
 ```
 
 ### Sync Optimization
