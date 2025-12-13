@@ -104,6 +104,12 @@ impl SyncWorker {
             .as_millis() as u64;
 
         let mut client = SyncClient::new(&self.target);
+        let token = std::env::var("CHRONOS_AUTH_TOKEN")
+            .or_else(|_| std::env::var("CHRONOS_AUTH_TOKEN_ADMIN"))
+            .ok();
+        if let Some(token) = token {
+            client = client.with_auth_token(token);
+        }
 
         match client.sync_operations(&self.edge_id, to_send.clone()).await {
             Ok(applied) => {

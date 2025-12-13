@@ -177,6 +177,7 @@ Send an ingest request (admin port is `8001 + 1000 = 9001`):
 
 ```bash
 curl -X POST http://192.168.1.100:9001/ingest \
+  -H 'Authorization: Bearer your-admin-token' \
   -H 'Content-Type: application/json' \
   -d '{
     "device_id": "esp-001",
@@ -261,14 +262,14 @@ export CHRONOS_CHIMP_ENABLE=1
 ### Health Check
 
 ```bash
-curl http://127.0.0.1:9000/health
+curl -H "Authorization: Bearer your-readonly-token" http://127.0.0.1:9000/health
 # {"status":"ok","role":"Leader","term":5}
 ```
 
 ### Metrics
 
 ```bash
-curl http://127.0.0.1:9000/metrics
+curl -H "Authorization: Bearer your-readonly-token" http://127.0.0.1:9000/metrics
 # Prometheus-compatible metrics
 ```
 

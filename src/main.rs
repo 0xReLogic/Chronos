@@ -48,9 +48,20 @@ fn http_get(host_port: &str, path: &str) -> Result<String, Box<dyn std::error::E
     use std::io::{Read, Write};
     use std::net::TcpStream;
     let mut stream = TcpStream::connect(host_port)?;
+
+    let auth_token = std::env::var("CHRONOS_AUTH_TOKEN")
+        .or_else(|_| std::env::var("CHRONOS_AUTH_TOKEN_READONLY"))
+        .or_else(|_| std::env::var("CHRONOS_AUTH_TOKEN_ADMIN"))
+        .ok();
+
     let req = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        path, host_port
+        "GET {} HTTP/1.1\r\nHost: {}\r\n{}Connection: close\r\n\r\n",
+        path,
+        host_port,
+        auth_token
+            .as_deref()
+            .map(|t| format!("Authorization: Bearer {}\r\n", t))
+            .unwrap_or_default(),
     );
     stream.write_all(req.as_bytes())?;
     let mut buf = Vec::new();

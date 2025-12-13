@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{body, Body, Method, Request, Response};
+use hyper::{body, header, Body, Method, Request, Response};
 use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
 use crate::network::{metrics, IngestRequest};
@@ -34,6 +34,60 @@ pub async fn run_http_admin(
     hyper::Server::bind(&addr).serve(make_svc).await
 }
 
+fn json_error(status: u16, msg: &str) -> Response<Body> {
+    let body = format!("{{\"error\":\"{}\"}}", msg);
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+fn authenticate_http(req: &Request<Body>, allow_readonly: bool) -> Option<Response<Body>> {
+    let admin_token = std::env::var("CHRONOS_AUTH_TOKEN_ADMIN").ok();
+    let readonly_token = std::env::var("CHRONOS_AUTH_TOKEN_READONLY").ok();
+    let require_auth = admin_token.is_some() || readonly_token.is_some();
+
+    if !require_auth {
+        return None;
+    }
+
+    let raw = match req.headers().get(header::AUTHORIZATION) {
+        Some(v) => v,
+        None => return Some(json_error(401, "missing authorization header")),
+    };
+    let raw_str = match raw.to_str() {
+        Ok(v) => v,
+        Err(_) => return Some(json_error(401, "invalid authorization header")),
+    };
+
+    const PREFIX: &str = "Bearer ";
+    if !raw_str.starts_with(PREFIX) {
+        return Some(json_error(401, "invalid authorization scheme"));
+    }
+    let token = &raw_str[PREFIX.len()..];
+
+    if let Some(admin) = admin_token.as_deref() {
+        if token == admin {
+            return None;
+        }
+    }
+
+    if let Some(ro) = readonly_token.as_deref() {
+        if token == ro {
+            if allow_readonly {
+                return None;
+            }
+            return Some(json_error(
+                403,
+                "write operations are not allowed for read-only role",
+            ));
+        }
+    }
+
+    Some(json_error(401, "invalid token"))
+}
+
 async fn handle(
     req: Request<Body>,
     node: Arc<Mutex<RaftNode>>,
@@ -42,6 +96,14 @@ async fn handle(
 ) -> Result<Response<Body>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
+
+    let allow_readonly = method == Method::GET && (path == "/metrics" || path == "/health");
+    let is_ingest = method == Method::POST && path == "/ingest";
+    if allow_readonly || is_ingest {
+        if let Some(resp) = authenticate_http(&req, allow_readonly) {
+            return Ok(resp);
+        }
+    }
 
     let response = match (method, path.as_str()) {
         (Method::GET, "/metrics") => {

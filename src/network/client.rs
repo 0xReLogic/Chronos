@@ -274,6 +274,7 @@ impl SqlClient {
 pub struct SyncClient {
     address: String,
     client: Option<SyncServiceClient<Channel>>,
+    auth_token: Option<String>,
 }
 
 impl SyncClient {
@@ -281,7 +282,12 @@ impl SyncClient {
         Self {
             address: address.to_string(),
             client: None,
+            auth_token: None,
         }
+    }
+    pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
+        self
     }
 
     pub async fn connect(&mut self) -> Result<(), NetworkError> {
@@ -324,11 +330,19 @@ impl SyncClient {
             operations: ops,
         };
 
+        let mut req = Request::new(request);
+        if let Some(token) = &self.auth_token {
+            let header_val = format!("Bearer {}", token);
+            let meta_val = MetadataValue::from_str(&header_val)
+                .map_err(|e| NetworkError::ConnectionError(e.to_string()))?;
+            req.metadata_mut().insert("authorization", meta_val);
+        }
+
         let response: SyncResponse = self
             .client
             .as_mut()
             .ok_or_else(|| NetworkError::ConnectionError("Client not connected".to_string()))?
-            .sync(Request::new(request))
+            .sync(req)
             .await?
             .into_inner();
 

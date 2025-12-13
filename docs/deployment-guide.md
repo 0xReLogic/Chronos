@@ -531,7 +531,7 @@ sudo systemctl stop chronos
 
 **Step 5: Verify sync**
 ```bash
-./chronos admin status --http 10.0.0.2:9001
+CHRONOS_AUTH_TOKEN_READONLY=your-readonly-token ./chronos admin status --http 10.0.0.2:9001
 # Should show Follower role and current term
 ```
 
@@ -542,7 +542,7 @@ sudo systemctl stop chronos
 #### HTTP Health Endpoint
 
 ```bash
-curl http://10.0.0.1:9000/health
+curl -H "Authorization: Bearer your-readonly-token" http://10.0.0.1:9000/health
 ```
 
 **Response:**
@@ -562,7 +562,7 @@ curl http://10.0.0.1:9000/health
 #### Prometheus Metrics
 
 ```bash
-curl http://10.0.0.1:9000/metrics
+curl -H "Authorization: Bearer your-readonly-token" http://10.0.0.1:9000/metrics
 ```
 
 **Sample Output:**
@@ -652,7 +652,7 @@ grpcurl -plaintext \
 **Resolution:**
 ```bash
 # Test cloud connectivity
-curl http://10.0.0.10:9000/health
+curl -H "Authorization: Bearer your-readonly-token" http://10.0.0.10:9000/health
 
 # Check edge logs
 journalctl -u chronos -f | grep sync
@@ -777,7 +777,7 @@ volumes:
   node3-data:
 ```
 
-Ingest: `node1` exposes `POST /ingest` at `http://localhost:9000/ingest` (unauthenticated).
+Ingest: `node1` exposes `POST /ingest` at `http://localhost:9000/ingest` (admin token required if auth is enabled).
 
 **Start Cluster:**
 ```bash

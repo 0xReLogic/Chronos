@@ -266,6 +266,8 @@ message SyncResponse {
 ```rust
 use chronos::network::proto::sync_service_client::SyncServiceClient;
 use chronos::network::proto::{SyncRequest, SyncOperation};
+use tonic::metadata::MetadataValue;
+use tonic::Request;
 
 let mut client = SyncServiceClient::connect("http://10.0.0.10:8000").await?;
 
@@ -279,7 +281,11 @@ let request = SyncRequest {
     ],
 };
 
-let response = client.sync(request).await?;
+let mut req = Request::new(request);
+let token = MetadataValue::from_str("Bearer your-admin-token")?;
+req.metadata_mut().insert("authorization", token);
+
+let response = client.sync(req).await?;
 println!("Applied: {}", response.into_inner().applied);
 ```
 
@@ -347,6 +353,11 @@ grpcurl -plaintext \
 
 Example: If gRPC is on `127.0.0.1:8000`, admin HTTP is on `127.0.0.1:9000`
 
+**Authentication:**
+- If `CHRONOS_AUTH_TOKEN_ADMIN` or `CHRONOS_AUTH_TOKEN_READONLY` is set, requests must include `Authorization: Bearer <token>`.
+- `/health` + `/metrics`: admin or read-only token
+- `/ingest`: admin token only
+
 ---
 
 ### GET /health
@@ -355,7 +366,7 @@ Node health status.
 
 **Request:**
 ```bash
-curl http://127.0.0.1:9000/health
+curl -H "Authorization: Bearer your-readonly-token" http://127.0.0.1:9000/health
 ```
 
 **Response:**
@@ -385,7 +396,7 @@ Prometheus-compatible metrics.
 
 **Request:**
 ```bash
-curl http://127.0.0.1:9000/metrics
+curl -H "Authorization: Bearer your-readonly-token" http://127.0.0.1:9000/metrics
 ```
 
 **Response:**
@@ -437,6 +448,7 @@ Gateway-only ingest endpoint for ESP/IoT devices. Available on the admin HTTP po
 
 ```bash
 curl -X POST http://127.0.0.1:9000/ingest \
+  -H 'Authorization: Bearer your-admin-token' \
   -H 'Content-Type: application/json' \
   -d '{
     "device_id": "esp-001",
@@ -466,6 +478,8 @@ Each entry in `metrics` produces one row in the `readings` table with columns `(
 
 - `202 Accepted` – payload queued: `{ "status": "queued" }`
 - `400 Bad Request` – invalid JSON or unreadable body
+- `401 Unauthorized` – missing or invalid token (when auth is enabled)
+- `403 Forbidden` – read-only token used for write
 - `503 Service Unavailable` – ingest disabled on this node
 
 ---

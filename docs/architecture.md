@@ -107,6 +107,7 @@ ChronosDB exposes four primary gRPC services:
 - `Sync`: Edge-to-cloud delta synchronization
 - Accepts batches of operations with HybridTimestamp metadata
 - Returns number of applied operations
+- Authentication: Bearer token validation (admin)
 
 **HealthService**
 - `GetConnectivity`: Returns node connectivity state
@@ -128,6 +129,8 @@ Lightweight HTTP server on `grpc_port + 1000`:
   - `chronos_raft_role` (0=follower, 1=candidate, 2=leader)
   - `chronos_storage_size_bytes`
  - `/ingest`: Optional gateway ingest endpoint (when node is started with `--enable-ingest`) that accepts JSON payloads from ESP/IoT devices, enqueues them in memory, and writes into the `readings` table via the SQL executor.
+
+Authentication (when `CHRONOS_AUTH_TOKEN_ADMIN`/`CHRONOS_AUTH_TOKEN_READONLY` is set): `/health` + `/metrics` allow admin/read-only token, `/ingest` requires admin token.
 
 ---
 

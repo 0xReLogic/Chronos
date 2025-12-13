@@ -385,6 +385,7 @@ impl SyncServer {
 #[tonic::async_trait]
 impl SyncService for SyncServer {
     async fn sync(&self, request: Request<SyncRequest>) -> Result<Response<SyncResponse>, Status> {
+        let _auth = authenticate_request(request.metadata(), false)?;
         let req = request.into_inner();
         let mut applied: u64 = 0;
         let mut skipped_lww: u64 = 0;
