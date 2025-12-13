@@ -663,6 +663,7 @@ impl SqlService for SqlServer {
 mod tests {
     use super::*;
     use crate::network::SyncStatusState;
+    use crate::network::TEST_ENV_LOCK;
     use std::sync::Arc;
     use tokio::sync::{Mutex as TokioMutex, RwLock};
     use tonic::metadata::{AsciiMetadataValue, MetadataMap};
@@ -685,8 +686,11 @@ mod tests {
 
     #[test]
     fn authenticate_request_allows_anonymous_when_no_tokens_set() {
-        std::env::remove_var("CHRONOS_AUTH_TOKEN_ADMIN");
-        std::env::remove_var("CHRONOS_AUTH_TOKEN_READONLY");
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("CHRONOS_AUTH_TOKEN_ADMIN");
+            std::env::remove_var("CHRONOS_AUTH_TOKEN_READONLY");
+        }
 
         let meta = make_metadata("alice", None);
         let ctx = authenticate_request(&meta, false).expect("auth should succeed");
@@ -696,8 +700,11 @@ mod tests {
 
     #[test]
     fn authenticate_request_admin_token_allows_write() {
-        std::env::set_var("CHRONOS_AUTH_TOKEN_ADMIN", "secret-admin");
-        std::env::remove_var("CHRONOS_AUTH_TOKEN_READONLY");
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("CHRONOS_AUTH_TOKEN_ADMIN", "secret-admin");
+            std::env::remove_var("CHRONOS_AUTH_TOKEN_READONLY");
+        }
 
         let meta = make_metadata("bob", Some("Bearer secret-admin"));
         let ctx = authenticate_request(&meta, false).expect("auth should succeed");
@@ -707,8 +714,11 @@ mod tests {
 
     #[test]
     fn authenticate_request_readonly_rejects_write_queries() {
-        std::env::remove_var("CHRONOS_AUTH_TOKEN_ADMIN");
-        std::env::set_var("CHRONOS_AUTH_TOKEN_READONLY", "ro-token");
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("CHRONOS_AUTH_TOKEN_ADMIN");
+            std::env::set_var("CHRONOS_AUTH_TOKEN_READONLY", "ro-token");
+        }
 
         let meta = make_metadata("carol", Some("Bearer ro-token"));
         let err = authenticate_request(&meta, false).unwrap_err();

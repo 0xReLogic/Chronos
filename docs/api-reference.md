@@ -444,6 +444,8 @@ scrape_configs:
 
 Gateway-only ingest endpoint for ESP/IoT devices. Available on the admin HTTP port (gRPC port + 1000) when the node is started with `--enable-ingest`.
 
+Limits: request body is size-limited (default `128KB`) and may be rate limited (default max inflight `64`). Configure with `CHRONOS_INGEST_MAX_BODY_BYTES` and `CHRONOS_INGEST_MAX_INFLIGHT`.
+
 **Request:**
 
 ```bash
@@ -480,6 +482,8 @@ Each entry in `metrics` produces one row in the `readings` table with columns `(
 - `400 Bad Request` – invalid JSON or unreadable body
 - `401 Unauthorized` – missing or invalid token (when auth is enabled)
 - `403 Forbidden` – read-only token used for write
+- `413 Payload Too Large` – request body exceeds limit
+- `429 Too Many Requests` – ingest rate limit exceeded
 - `503 Service Unavailable` – ingest disabled on this node
 
 ---
@@ -870,32 +874,7 @@ loop {
 
 ## Rate Limiting
 
-ChronosDB does not implement built-in rate limiting. Use external tools:
-
-**nginx reverse proxy:**
-
-```nginx
-limit_req_zone $binary_remote_addr zone=chronos:10m rate=100r/s;
-
-server {
-    listen 8080;
-    location / {
-        limit_req zone=chronos burst=20;
-        grpc_pass grpc://127.0.0.1:8000;
-    }
-}
-```
-
-**Envoy proxy:**
-
-```yaml
-rate_limits:
-  - actions:
-    - request_headers:
-        header_name: ":authority"
-        descriptor_key: "authority"
-    per_connection_buffer_limit_bytes: 1048576
-```
+ChronosDB includes basic ingest guardrails on the HTTP admin `/ingest` endpoint (max body size + max inflight). For gRPC and cluster-external rate limiting (per-IP / RPS), use a reverse proxy/load balancer/WAF (nginx, Envoy, API gateway).
 
 ---
 

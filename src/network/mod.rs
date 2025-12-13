@@ -55,6 +55,9 @@ pub use client::{RaftClient, SqlClient, SyncClient};
 pub use server::{RaftServer, SqlServer};
 
 #[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tonic::Status;

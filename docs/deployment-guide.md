@@ -777,7 +777,7 @@ volumes:
   node3-data:
 ```
 
-Ingest: `node1` exposes `POST /ingest` at `http://localhost:9000/ingest` (admin token required if auth is enabled).
+Ingest: `node1` exposes `POST /ingest` at `http://localhost:9000/ingest` (admin token required if auth is enabled). Default limits: `128KB` max body and `64` max inflight (`413`/`429`).
 
 **Start Cluster:**
 ```bash
@@ -846,7 +846,7 @@ docker-compose down
 
 2. **Restrict admin endpoints:**
    - Bind admin HTTP to internal network only
-   - Use reverse proxy (nginx) with authentication
+   - Optionally use a reverse proxy/load balancer (nginx/Envoy/API gateway) for TLS termination, IP allowlist, and per-IP/RPS rate limiting
 
 ---
 
