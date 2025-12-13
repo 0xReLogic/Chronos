@@ -17,6 +17,8 @@ WORKDIR /app/chronos-build
 # Copy manifest and lockfile from host
 COPY Cargo.toml Cargo.lock ./
 
+RUN mkdir -p benches && touch benches/storage_bench.rs
+
 # Pre-build dependencies (will be cached as long as Cargo.toml/Cargo.lock don't change)
 RUN cargo build --release || true
 
