@@ -30,6 +30,17 @@ jobs:
     - name: Run clippy
       run: cargo clippy -- -D warnings
 
+  docker:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build Docker image
+      run: docker build -t chronos:ci .
+    - name: Docker smoke test
+      run: docker run --rm chronos:ci --help > /dev/null
+
   soak:
 
     runs-on: ubuntu-latest
